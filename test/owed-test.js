@@ -1,0 +1,33 @@
+// Redeem a reward, check it lands on the owed list, mark it given, refund another.
+const { chromium } = require("playwright"); const http = require("http"), fs = require("fs"), path = require("path");
+const root = path.resolve(__dirname, ".."); const out = process.argv[2] || "shots-owed"; fs.mkdirSync(out, { recursive: true });
+const srv = http.createServer((q, r) => { const p = path.join(root, decodeURIComponent(q.url.split("?")[0])); r.writeHead(200, { "Content-Type": (p.endsWith(".js") ? "text/javascript" : p.endsWith(".svg") ? "image/svg+xml" : "text/html") + "; charset=utf-8" }); fs.createReadStream(p).pipe(r); }).listen(8769, async () => {
+  const b = await chromium.launch(); const pg = await b.newPage({ viewport: { width: 1280, height: 800 } });
+  const logs = []; pg.on("console", (m) => logs.push(m.text())); pg.on("pageerror", (e) => logs.push("PAGEERROR " + e.message));
+  const c = () => pg.locator("skyfam-card"); const shot = async (n) => { await pg.waitForTimeout(300); await pg.screenshot({ path: `${out}/${n}.png` }); };
+  const ok = (cond, msg) => console.log((cond ? "PASS " : "FAIL ") + msg);
+  await pg.goto("http://localhost:8769/test/harness.html?view=today"); await pg.waitForTimeout(600);
+  await shot("0-today");
+  ok((await c().locator(".kid-mini", { hasText: "Mia" }).textContent()).includes("🎁 1 owed"), "Today shows Mia's owed count");
+  ok((await c().locator(".chip .av.pic").count()) === 3, "photos on Alex, Jordan, Leo chips");
+  ok((await c().locator('.chip:has-text("Mia") .dot').count()) === 0, "no home/away dot for an untracked person");
+  await c().locator(".nav[data-v=chores]").click(); await shot("1-chores");
+  ok((await c().locator(".owed .owed-row").count()) === 2, "two rewards owed");
+  await c().locator(".bank").first().click(); await shot("2-mia-rewards");
+  ok((await c().locator(".modal .waiting").textContent()).includes("Pick the family movie"), "kid sees what she's waiting on");
+  await c().locator(".modal .reward:not(.locked)").first().click(); await c().locator("[data-act=confirm-yes]").click(); await pg.waitForTimeout(400);
+  ok(logs.some((l) => l.includes("SERVICE todo add_item") && l.includes("todo.skyfam_rewards_owed") && l.includes("Mia · 5⭐ · redeemed")), "redeem adds to owed list");
+  await shot("3-after-redeem");
+  ok((await c().locator(".owed .owed-row").count()) === 3, "owed list now 3");
+  await c().locator('.owed .owed-row:has-text("Leo") [data-act=owed-give]').click(); await pg.waitForTimeout(300);
+  ok((await c().locator(".owed .owed-list").first().locator(".owed-row").count()) === 2, "given item leaves the open list");
+  const starsBefore = Number((await c().locator(".bank").first().textContent()).match(/\d+/)[0]);
+  await c().locator('.owed .owed-row:has-text("Pick the family movie") [data-act=owed-refund]').click(); await shot("4-refund-confirm");
+  await c().locator("[data-act=confirm-yes]").click(); await pg.waitForTimeout(400);
+  const starsAfter = Number((await c().locator(".bank").first().textContent()).match(/\d+/)[0]);
+  ok(starsAfter === starsBefore + 10, `refund gives stars back (${starsBefore} -> ${starsAfter})`);
+  await c().locator(".owed .showdone").click(); await shot("5-given");
+  await c().locator(".nav[data-v=planner]").click(); await shot("6-planner");
+  console.log(logs.filter((l) => l.includes("ERROR")).join("\n"));
+  await b.close(); srv.close();
+});

@@ -24,6 +24,8 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
 - **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card.
+- **Owed rewards**: every redeemed reward goes on an Owed list on the Chores tab until a parent taps **Given**. **↩** cancels it and gives the stars back. The kid's rewards screen shows what they're waiting on.
+- **Photos**: a person's Home Assistant photo replaces their initials on chips, Planner columns and chore rings.
 
 On screens under 760px wide the side rail becomes a bottom tab bar and the views stack.
 
@@ -61,7 +63,7 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 
 1. **Chore lists**: Settings → Devices & services → Add integration → **Local To-do**. Create one list per kid (for example "Mia's Chore Chart").
 2. **Stars**: Settings → Devices & services → Helpers → Create helper → **Counter**, one per kid, minimum 0.
-3. **Rewards** (optional): one more Local To-do list, for example "SkyFam Rewards".
+3. **Rewards** (optional): one more Local To-do list, for example "SkyFam Rewards", and a second one, for example "SkyFam Rewards Owed", to track redeemed rewards until they're given.
 4. **Nightly reset**: add the automation in [`examples/reset-chores-automation.yaml`](examples/reset-chores-automation.yaml) so chores reopen every night. Earned stars stay.
 5. Add a dashboard with a single **Panel** view, then add the **SkyFam family hub** card from the card picker. It starts pre-filled with the people, calendars and weather Home Assistant already has.
 
@@ -120,16 +122,19 @@ lists:
   - entity: todo.shopping_list
     name: Groceries
 rewards_list: todo.skyfam_rewards
+rewards_owed_list: todo.skyfam_rewards_owed
 ```
 
 ### Options
 
 | Option | Default | Description |
 |---|---|---|
-| `people` | required | Family members. Each takes `name`, `color`, `calendars`, and optionally `person`, `chores`, `stars`, `prefix_titles`, `initials`, `add_calendar` (which calendar new events go to; defaults to the first). |
+| `people` | required | Family members. Each takes `name`, `color`, `calendars`, and optionally `person` (photo and home/away dot), `picture` (image URL, overrides the person's photo), `chores`, `stars`, `prefix_titles`, `initials`, `add_calendar` (which calendar new events go to; defaults to the first). |
 | `shared` | `[]` | Shared calendars, as `entity`, `name`, `color`, `read_only`. |
 | `lists` | `[]` | To-do lists, as `entity` and `name`. The first one also shows on Today. |
 | `rewards_list` | none | A to-do list holding the rewards. Without it, `rewards:` from the config is used and can't be edited from the card. |
+| `rewards_owed_list` | none | A to-do list where redeemed rewards wait until a parent marks them given. Each item's description reads "Mia · 10⭐ · redeemed Nov 3". |
+| `hide_pictures` | `false` | Show initials instead of photos. |
 | `rewards` | `[]` | Static rewards, as `name`, `cost`, `icon`. Only used when `rewards_list` is not set. |
 | `weather_entity` | none | Current temperature, today's high/low, and a forecast in each week column. |
 | `title` | none | Shown next to the clock on wide screens. |
@@ -172,6 +177,7 @@ FAKE_TIME=2026-11-03T15:30:00 DARK=1 node shoot.js shots-dark 1280 800   # pinne
 node shoot.js shots-phone 390 844     # phone size
 node edit-test.js shots-edit          # clicks through adding/editing chores and rewards
 node editor-test.js shots-editor      # drives the visual editor and checks the YAML it saves
+node owed-test.js shots-owed          # photos, redeeming a reward, marking it given, refunding
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).

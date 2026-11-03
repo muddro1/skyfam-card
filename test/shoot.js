@@ -11,7 +11,7 @@ fs.mkdirSync(out, { recursive: true });
 const srv = http.createServer((req, res) => {
   const p = path.join(root, decodeURIComponent(req.url.split("?")[0]));
   if (!p.startsWith(root) || !fs.existsSync(p)) { res.writeHead(404); return res.end(); }
-  res.writeHead(200, { "Content-Type": p.endsWith(".js") ? "text/javascript" : "text/html" });
+  res.writeHead(200, { "Content-Type": p.endsWith(".js") ? "text/javascript" : p.endsWith(".svg") ? "image/svg+xml" : "text/html" });
   fs.createReadStream(p).pipe(res);
 }).listen(8765, async () => {
   const browser = await chromium.launch();

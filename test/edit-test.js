@@ -1,6 +1,6 @@
 const { chromium } = require("playwright"); const http=require("http"),fs=require("fs"),path=require("path");
 const root=path.resolve(__dirname,".."); const out=process.argv[2] || "shots-edit"; fs.mkdirSync(out,{recursive:true});
-const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.url.split("?")[0]));r.writeHead(200,{"Content-Type":(p.endsWith(".js")?"text/javascript":"text/html")+"; charset=utf-8"});fs.createReadStream(p).pipe(r);}).listen(8767,async()=>{
+const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.url.split("?")[0]));r.writeHead(200,{"Content-Type":(p.endsWith(".js")?"text/javascript":p.endsWith(".svg")?"image/svg+xml":"text/html")+"; charset=utf-8"});fs.createReadStream(p).pipe(r);}).listen(8767,async()=>{
  const b=await chromium.launch(); const pg=await b.newPage({viewport:{width:1280,height:800}});
  const logs=[]; pg.on("console",m=>logs.push(m.text())); pg.on("pageerror",e=>logs.push("PAGEERROR "+e.message));
  const c=()=>pg.locator("skyfam-card"); const shot=async(n)=>{await pg.waitForTimeout(250); await pg.screenshot({path:`${out}/${n}.png`});};

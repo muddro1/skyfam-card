@@ -1,7 +1,7 @@
 // Drives the visual editor against the mock hass and checks the config it emits and the live preview.
 const { chromium } = require("playwright"); const http = require("http"), fs = require("fs"), path = require("path");
 const root = path.resolve(__dirname, ".."); const out = process.argv[2] || "shots-editor"; fs.mkdirSync(out, { recursive: true });
-const srv = http.createServer((q, r) => { const p = path.join(root, decodeURIComponent(q.url.split("?")[0])); r.writeHead(200, { "Content-Type": (p.endsWith(".js") ? "text/javascript" : "text/html") + "; charset=utf-8" }); fs.createReadStream(p).pipe(r); }).listen(8768, async () => {
+const srv = http.createServer((q, r) => { const p = path.join(root, decodeURIComponent(q.url.split("?")[0])); r.writeHead(200, { "Content-Type": (p.endsWith(".js") ? "text/javascript" : p.endsWith(".svg") ? "image/svg+xml" : "text/html") + "; charset=utf-8" }); fs.createReadStream(p).pipe(r); }).listen(8768, async () => {
   const b = await chromium.launch(); const pg = await b.newPage({ viewport: { width: 1500, height: 900 } });
   const logs = []; pg.on("console", (m) => logs.push(m.text())); pg.on("pageerror", (e) => logs.push("PAGEERROR " + e.message));
   const ed = () => pg.locator("skyfam-card-editor"); const card = () => pg.locator("skyfam-card");

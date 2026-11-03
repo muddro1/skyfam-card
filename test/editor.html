@@ -58,6 +58,7 @@ const todos = {
     {uid:"c3", summary:"🪥 Brush teeth", description:"morning", status:"needs_action"}, {uid:"c4", summary:"🍽️ Clear your plate", description:"evening 1⭐", status:"needs_action"},
     {uid:"c5", summary:"🧺 Clothes in the hamper", description:"evening 1⭐", status:"needs_action"}, {uid:"c6", summary:"🥄 Unload silverware", description:"afternoon 2⭐", status:"needs_action"}],
   "todo.skyfam_rewards": [{uid:"r1", summary:"📱 15 min screen time", description:"5⭐", status:"needs_action"}, {uid:"r2", summary:"🎬 Pick the family movie", description:"10⭐", status:"needs_action"}, {uid:"r3", summary:"🍦 Ice cream treat", description:"15⭐", status:"needs_action"}],
+  "todo.skyfam_rewards_owed": [{uid:"o1", summary:"🎬 Pick the family movie", description:"Mia · 10⭐ · redeemed Nov 1", status:"needs_action"}, {uid:"o2", summary:"📱 15 min screen time", description:"Leo · 5⭐ · redeemed Nov 2", status:"needs_action"}, {uid:"o3", summary:"🍦 Ice cream treat", description:"Mia · 15⭐ · redeemed Oct 28", status:"completed"}],
   "todo.leo_chores": [
     {uid:"d1", summary:"🛏️ Make your bed", description:"morning 1⭐", status:"needs_action"}, {uid:"d2", summary:"🪥 Brush teeth", description:"morning", status:"needs_action"},
     {uid:"d3", summary:"🧸 Pick up toys", description:"evening 2⭐", status:"needs_action"}, {uid:"d4", summary:"🌙 Pajamas on", description:"evening", status:"needs_action"}],
@@ -65,7 +66,7 @@ const todos = {
 const subs = {};
 const states = {
   "weather.forecast_home": { state:"rainy", attributes:{ temperature:71 } },
-  "person.alex": { state:"home", attributes:{} }, "person.jordan": { state:"not_home", attributes:{} },
+  "person.alex": { state:"home", attributes:{ entity_picture:"/test/avatars/alex.svg" } }, "person.jordan": { state:"not_home", attributes:{ entity_picture:"/test/avatars/jordan.svg" } }, "person.mia": { state:"unknown", attributes:{} },
   "counter.mia_stars": { state:"12", attributes:{} }, "counter.leo_stars": { state:"4", attributes:{} },
 };
 const card = document.createElement("skyfam-card");
@@ -93,12 +94,12 @@ const cfg = window.SKYFAM_CONFIG || {
   people: [
     { name:"Alex", color:"#e8a33d", calendars:["calendar.alex"], person:"person.alex" },
     { name:"Jordan", color:"#e06c5f", calendars:["calendar.jordan"], person:"person.jordan" },
-    { name:"Mia", color:"#4aa8d8", calendars:["calendar.mia"], chores:"todo.mia_chores", stars:"counter.mia_stars", prefix_titles:true },
-    { name:"Leo", color:"#5cb85c", calendars:["calendar.leo"], chores:"todo.leo_chores", stars:"counter.leo_stars", prefix_titles:true },
+    { name:"Mia", color:"#4aa8d8", calendars:["calendar.mia"], person:"person.mia", chores:"todo.mia_chores", stars:"counter.mia_stars", prefix_titles:true },
+    { name:"Leo", color:"#5cb85c", calendars:["calendar.leo"], picture:"/test/avatars/leo.svg", chores:"todo.leo_chores", stars:"counter.leo_stars", prefix_titles:true },
   ],
   shared: [ { name:"Family", color:"#9b6fc4", entity:"calendar.family" }, { name:"Birthdays", color:"#e88fb4", entity:"calendar.birthdays", read_only:true }, { name:"Trash", color:"#8fa3ad", entity:"calendar.recycle_coach", read_only:true } ],
   lists: [ { entity:"todo.home", name:"Home" }, { entity:"todo.alex", name:"Alex's To-Do" } ],
-  rewards_list: "todo.skyfam_rewards", parent_pin: new URLSearchParams(location.search).get("pin") || undefined,
+  rewards_list: "todo.skyfam_rewards", rewards_owed_list: "todo.skyfam_rewards_owed", parent_pin: new URLSearchParams(location.search).get("pin") || undefined,
   rewards: [ {name:"15 min screen time", cost:5, icon:"📱"}, {name:"Pick the movie", cost:10, icon:"🎬"}, {name:"Pick dinner", cost:10, icon:"🍕"}, {name:"Ice cream", cost:15, icon:"🍦"} ],
 };
 card.preview = true;

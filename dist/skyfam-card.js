@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.4.0";
+const SKYFAM_VERSION = "0.5.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -110,7 +110,7 @@ class SkyFamCard extends HTMLElement {
   }
 
   _todoEntities() {
-    return [...new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores), this._config.rewards_list].filter(Boolean))];
+    return [...new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores), this._config.rewards_list, this._config.rewards_owed_list].filter(Boolean))];
   }
   _teardown() {
     this._unsubs.forEach((u) => { try { Promise.resolve(u).then((f) => f && f()); } catch (e) {} });
@@ -175,7 +175,7 @@ class SkyFamCard extends HTMLElement {
   _stateSig() {
     const h = this._hass;
     const ids = [this._config.weather_entity, "sun.sun", ...this._people.map((p) => p.person), ...this._people.map((p) => p.stars)].filter(Boolean);
-    return ids.map((id) => { const s = h.states[id]; return s ? s.state + (s.attributes.temperature ?? "") : "-"; }).join("|");
+    return ids.map((id) => { const s = h.states[id]; return s ? s.state + (s.attributes.temperature ?? "") + (s.attributes.entity_picture || "") : "-"; }).join("|");
   }
 
   _load(k, d) { try { const v = localStorage.getItem("skyfam:" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
@@ -357,6 +357,36 @@ class SkyFamCard extends HTMLElement {
     return (this._config.rewards || []).map((r) => ({ ...r }));
   }
 
+  // Redeemed rewards waiting to be given: "🍕 Pick dinner" / "Ethan · 10⭐ · redeemed Nov 3"
+  _owed() {
+    const ent = this._config.rewards_owed_list;
+    if (!ent) return null;
+    return (this._todos[ent] || []).map((i) => {
+      const [icon, name] = splitEmoji(i.summary);
+      const d = i.description || "";
+      const kid = d.split("·")[0].trim();
+      const m = d.match(/(\d+)\s*⭐/);
+      const w = d.match(/redeemed\s+(.+)$/i);
+      const person = this._people.find((x) => x.name.toLowerCase() === kid.toLowerCase());
+      return { uid: i.uid, icon: icon || "🎁", name: name || i.summary, kid, person, cost: m ? Number(m[1]) : 0, when: w ? w[1].trim() : "", done: i.status === "completed" };
+    });
+  }
+
+  _owedPanel() {
+    const owed = this._owed();
+    if (!owed) return "";
+    const ent = this._config.rewards_owed_list;
+    const open = owed.filter((o) => !o.done), given = owed.filter((o) => o.done);
+    const row = (o) => `<div class="owed-row ${o.done ? "done" : ""}" style="--c:${o.person ? o.person.color : "var(--accent)"}">
+      <span class="ri">${esc(o.icon)}</span><span class="on"><b>${esc(o.name)}</b><small><span class="kidtag">${esc(o.kid || "?")}</span>${o.cost ? ` · ${o.cost}⭐` : ""}${o.when ? ` · ${esc(o.when)}` : ""}</small></span>
+      ${o.done ? `<button class="btn sm" data-act="owed-undo" data-uid="${esc(o.uid)}">Undo</button>`
+        : `<button class="btn sm" data-act="owed-refund" data-uid="${esc(o.uid)}" title="Cancel and give the stars back">↩</button><button class="btn primary sm" data-act="owed-give" data-uid="${esc(o.uid)}">✓ Given</button>`}</div>`;
+    const show = this._showDone.has(ent);
+    return `<div class="owed card"><h2>🎁 Owed <span class="cnt">${open.length}</span></h2>
+      <div class="owed-list">${open.map(row).join("") || `<div class="empty small">Nothing owed right now</div>`}</div>
+      ${given.length ? `<button class="showdone" data-act="showdone" data-e="${esc(ent)}">${show ? "Hide" : "Show"} given (${given.length})</button>${show ? `<div class="owed-list">${given.map(row).join("")}</div>` : ""}` : ""}</div>`;
+  }
+
   // Optional parent PIN (config parent_pin) guards editing; stays unlocked for 5 minutes.
   _gate(fn) {
     const pin = this._config.parent_pin;
@@ -474,10 +504,8 @@ class SkyFamCard extends HTMLElement {
     const today = this._forecast[0];
     const weather = w ? `<div class="wx"><span class="wx-i">${WEATHER_ICON[w.state] || "🌡️"}</span><span class="wx-t">${Math.round(w.attributes.temperature)}°</span>${today ? `<span class="wx-hl">${Math.round(today.temperature)}° / ${Math.round(today.templow)}°</span>` : ""}</div>` : "";
     const chips = [...this._people, ...this._shared].map((p) => {
-      const ps = p.person && this._hass.states[p.person];
-      const home = ps ? ps.state === "home" : null;
       return `<button class="chip ${this._hidden.has(p.key) ? "off" : ""}" data-act="filter" data-k="${esc(p.key)}" style="--c:${p.color}">
-        <span class="av">${esc((p.initials || p.name[0]).toUpperCase())}${home === null ? "" : `<i class="dot ${home ? "home" : "away"}"></i>`}</span>${esc(p.name)}</button>`;
+        ${this._avatar(p)}${esc(p.name)}</button>`;
     }).join("");
     const tm = THEMES.find((t) => t.id === this._themeMode()) || THEMES[0];
     const themeBtn = `<button class="themebtn" data-act="theme" title="Theme: ${tm.label}">${tm.icon}<span>${tm.label}</span></button>`;
@@ -535,11 +563,29 @@ class SkyFamCard extends HTMLElement {
   _ring(done, total, p) {
     const pct = total ? done / total : 0;
     const r = 22, c = 2 * Math.PI * r;
-    return `<svg class="ring" viewBox="0 0 54 54"><circle cx="27" cy="27" r="${r}" class="ring-bg"/><circle cx="27" cy="27" r="${r}" class="ring-fg" stroke="${p.color}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - pct)}"/><text x="27" y="32" text-anchor="middle">${esc((p.initials || p.name[0]).toUpperCase())}</text></svg>`;
+    const pic = this._pic(p);
+    return `<span class="ringw"><svg class="ring" viewBox="0 0 54 54"><circle cx="27" cy="27" r="${r}" class="ring-bg"/><circle cx="27" cy="27" r="${r}" class="ring-fg" stroke="${p.color}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - pct)}"/>${pic ? "" : `<text x="27" y="32" text-anchor="middle">${esc(this._initials(p))}</text>`}</svg>${pic ? `<img src="${esc(pic)}" alt="">` : ""}</span>`;
+  }
+
+  _initials(p) { return (p.initials || p.name[0] || "?").toUpperCase(); }
+  // Photo: per-person "picture" URL, else the person entity's own picture
+  _pic(p) {
+    if (!p || this._config.hide_pictures) return null;
+    if (p.picture) return p.picture;
+    const ps = p.person && this._hass.states[p.person];
+    return (ps && ps.attributes.entity_picture) || null;
+  }
+  _avatar(p) {
+    const pic = this._pic(p);
+    const ps = p.person && this._hass.states[p.person];
+    // no dot for people without a tracker (state unknown)
+    const dot = ps && !["unknown", "unavailable"].includes(ps.state) ? `<i class="dot ${ps.state === "home" ? "home" : "away"}"></i>` : "";
+    return `<span class="av ${pic ? "pic" : ""}" ${pic ? `style="background-image:url('${esc(pic)}')"` : ""}>${pic ? "" : esc(this._initials(p))}${dot}</span>`;
   }
   _starsBadge(p) {
     const s = p.stars && this._hass.states[p.stars];
-    return s ? ` · <span class="stars">⭐ ${esc(s.state)}</span>` : "";
+    const n = (this._owed() || []).filter((o) => !o.done && o.person === p).length;
+    return (s ? ` · <span class="stars">⭐ ${esc(s.state)}</span>` : "") + (n ? ` · 🎁 ${n} owed` : "");
   }
 
   _dayHead(d) {
@@ -602,8 +648,7 @@ class SkyFamCard extends HTMLElement {
       return `<div class="pl-col" style="--c:${c.color}"><div class="pl-grid" style="height:${(h1 - h0) * H}px">${slots}${blocks}</div></div>`;
     }).join("");
     const heads = cols.map((c) => {
-      const ps = c.owner && c.owner.person && this._hass.states[c.owner.person];
-      return `<div class="pl-head" style="--c:${c.color}"><span class="av">${esc((c.initials || c.name[0]).toUpperCase())}${ps ? `<i class="dot ${ps.state === "home" ? "home" : "away"}"></i>` : ""}</span><b>${esc(c.name)}</b></div>`;
+      return `<div class="pl-head" style="--c:${c.color}">${this._avatar(c.owner || { name: c.name, color: c.color })}<b>${esc(c.name)}</b></div>`;
     }).join("");
     const nowLine = sameDay(day, now) && now.getHours() + now.getMinutes() / 60 >= h0 && now.getHours() < h1
       ? `<div class="pl-now" style="top:${(now.getHours() + now.getMinutes() / 60 - h0) * H}px"></div>` : "";
@@ -687,7 +732,7 @@ class SkyFamCard extends HTMLElement {
         ${stars ? `<button class="bank" data-act="rewards" data-p="${esc(p.name)}">⭐ ${esc(stars.state)}<small>Rewards</small></button>` : ""}</div>
         <div class="kid-body">${groups || `<div class="empty small">No chores yet</div>`}
         ${ed || !groups ? `<button class="addrow" data-act="chore-add" data-p="${esc(p.name)}">＋ Add a chore for ${esc(p.name)}</button>` : ""}</div></div>`;
-    }).join("")}</div>`;
+    }).join("")}${this._owedPanel()}</div>`;
   }
 
   _listPanel(l, compact) {
@@ -758,7 +803,9 @@ class SkyFamCard extends HTMLElement {
           <div class="rw-list">${rw.map((r) => `<button class="rw-row" data-act="reward-open" data-uid="${esc(r.uid)}"><span class="ri">${esc(r.icon)}</span><span class="rn">${esc(r.name)}</span><span class="rc">${r.cost} ⭐</span><span class="pen">✏️</span></button>`).join("") || `<div class="empty small">No rewards yet</div>`}</div>
           <div class="row end"><button class="btn" data-act="close">Done</button><button class="btn primary" data-act="reward-new">＋ New reward</button></div>`;
       } else {
+        const waiting = (this._owed() || []).filter((o) => !o.done && p && o.person === p);
         inner = `<h2>${esc(p ? p.name + "'s rewards" : "Rewards")}</h2>${p ? `<p class="m-when">⭐ ${bal} stars saved</p>` : ""}
+          ${waiting.length ? `<p class="waiting">Waiting on: ${waiting.map((o) => `${esc(o.icon)} ${esc(o.name)}`).join(", ")}</p>` : ""}
           <div class="rewards">${rw.map((r, i) => `<button class="reward ${bal < r.cost ? "locked" : ""}" data-act="redeem" data-p="${esc(m.person || "")}" data-i="${i}">
             <span class="ri">${esc(r.icon || "🎁")}</span><span class="rn">${esc(r.name)}</span><span class="rc">${r.cost} ⭐</span></button>`).join("") || `<div class="empty small">No rewards set up yet</div>`}</div>
           <div class="row end">${canEdit ? `<button class="btn" data-act="rewards-edit">✏️ Edit rewards</button>` : ""}<button class="btn primary" data-act="close">Done</button></div>`;
@@ -869,8 +916,30 @@ class SkyFamCard extends HTMLElement {
         if (bal < r.cost) { this._toast(`Need ${r.cost - bal} more ⭐`); break; }
         this._openModal({ type: "confirm", text: `Spend ${r.cost} ⭐ on “${r.name}” for ${p.name}?`, onYes: async () => {
           await this._svc("counter", "set_value", { value: bal - r.cost }, { entity_id: p.stars });
-          this._celebrate(`${r.icon || "🎁"} ${r.name}!`, true);
+          const owedList = this._config.rewards_owed_list;
+          if (owedList) await this._svc("todo", "add_item", { item: `${r.icon || "🎁"} ${r.name}`,
+            description: `${p.name} · ${r.cost}⭐ · redeemed ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}` }, { entity_id: owedList });
+          this._celebrate(`${r.icon || "🎁"} ${r.name}!${owedList ? " Added to the owed list" : ""}`, true);
         } });
+        break;
+      }
+      case "owed-give": case "owed-undo": {
+        const uid = el.dataset.uid, status = a === "owed-give" ? "completed" : "needs_action";
+        this._gate(() => this._svc("todo", "update_item", { item: uid, status }, { entity_id: this._config.rewards_owed_list })
+          .then(() => this._toast(status === "completed" ? "Marked as given ✓" : "Back on the owed list")).catch(() => {}));
+        break;
+      }
+      case "owed-refund": {
+        const o = (this._owed() || []).find((x) => x.uid === el.dataset.uid);
+        if (!o) break;
+        this._gate(() => this._openModal({ type: "confirm", text: o.person && o.person.stars && o.cost ? `Cancel “${o.name}” and give ${o.cost} ⭐ back to ${o.person.name}?` : `Remove “${o.name}” from the owed list?`, onYes: async () => {
+          if (o.person && o.person.stars && o.cost && this._hass.states[o.person.stars]) {
+            const cur = Number(this._hass.states[o.person.stars].state) || 0;
+            await this._svc("counter", "set_value", { value: cur + o.cost }, { entity_id: o.person.stars });
+          }
+          await this._svc("todo", "remove_item", { item: o.uid }, { entity_id: this._config.rewards_owed_list });
+          this._toast(o.cost ? `Refunded ${o.cost} ⭐` : "Removed");
+        } }));
         break;
       }
       case "chore-edit": this._gate(() => { this._editChores = !this._editChores; this._render(); }); break;
@@ -1019,6 +1088,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .chip.off { opacity:.35; filter:grayscale(.7); }
 .av { position:relative; width:32px; height:32px; border-radius:50%; background:var(--c); color:#fff; display:grid; place-items:center; font-weight:900; font-size:15px; }
 .dot { position:absolute; right:-2px; bottom:-2px; width:12px; height:12px; border-radius:50%; border:2px solid var(--card); }
+.av.pic { background-color:var(--c); background-size:cover; background-position:center; box-shadow:0 0 0 2px var(--c); }
 .dot.home { background:#3cb371; } .dot.away { background:#c9c2b8; }
 .body { flex:1; min-height:0; overflow:auto; padding:6px 22px 96px; }
 .card { background:var(--card); border-radius:var(--r); padding:18px; box-shadow:0 1px 4px rgba(60,40,10,.06); }
@@ -1040,7 +1110,8 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .a-who { background:color-mix(in srgb, var(--c) 25%, var(--card)); padding:4px 10px; border-radius:999px; font-size:13px; font-weight:800; }
 .kid-mini { padding:12px; border-radius:18px; background:color-mix(in srgb, var(--c) 10%, var(--card)); margin-bottom:12px; }
 .km-head { display:flex; align-items:center; gap:12px; margin-bottom:6px; } .km-head b { font-size:18px; display:block; } .km-head span { color:var(--mute); font-weight:700; font-size:14px; }
-.ring { width:54px; height:54px; flex:none; } .ring-bg { fill:none; stroke:color-mix(in srgb, var(--ink) 8%, transparent); stroke-width:6; }
+.ringw { position:relative; display:block; width:54px; height:54px; flex:none; } .ring { width:100%; height:100%; display:block; }
+.ringw img { position:absolute; left:18%; top:18%; width:64%; height:64%; border-radius:50%; object-fit:cover; } .ring-bg { fill:none; stroke:color-mix(in srgb, var(--ink) 8%, transparent); stroke-width:6; }
 .ring-fg { fill:none; stroke-width:6; stroke-linecap:round; transform:rotate(-90deg); transform-origin:center; transition:stroke-dashoffset .5s; } .ring text { font-weight:900; font-size:17px; fill:var(--ink); }
 .stars { color:#b88400; font-weight:900; }
 .chore-row { display:flex; align-items:center; gap:10px; width:100%; padding:9px 6px; font-weight:700; font-size:16px; border-radius:12px; }
@@ -1076,7 +1147,7 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .chores { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:18px; }
 .kid { background:color-mix(in srgb, var(--c) 9%, var(--card)); }
 .kid-head { display:flex; align-items:center; gap:14px; } .kh-txt { flex:1; } .kh-txt b { font-size:24px; display:block; } .kh-txt span { color:var(--mute); font-weight:700; }
-.kid-head .ring { width:68px; height:68px; }
+.kid-head .ringw { width:68px; height:68px; }
 .bank { display:flex; flex-direction:column; align-items:center; background:var(--card); border-radius:18px; padding:8px 14px; font-size:22px; font-weight:900; color:#b88400; } .bank small { font-size:12px; color:var(--mute); }
 .chore { display:flex; align-items:center; gap:14px; width:100%; background:var(--card); border-radius:18px; padding:14px; margin-bottom:8px; font-size:19px; font-weight:800; transition:transform .1s; }
 .chore:active { transform:scale(.98); }
@@ -1172,6 +1243,17 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .pin-dots { font-size:40px; letter-spacing:12px; text-align:center; min-height:52px; }
 .pad { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; } .pad button { background:var(--bg); border-radius:16px; padding:16px; font-size:26px; font-weight:900; text-align:center; }
 
+/* owed rewards */
+.owed { background:color-mix(in srgb, #d9a400 9%, var(--card)); }
+.owed-list { display:flex; flex-direction:column; gap:8px; }
+.owed-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:16px; padding:10px 12px; border-left:5px solid var(--c); }
+.owed-row .ri { font-size:28px; } .owed-row .on { flex:1; display:flex; flex-direction:column; min-width:0; }
+.owed-row .on b { font-size:17px; } .owed-row small { color:var(--mute); font-weight:700; font-size:13px; }
+.kidtag { color:var(--c); font-weight:900; }
+.owed-row.done { opacity:.55; } .owed-row.done b { text-decoration:line-through; }
+.btn.sm { padding:8px 12px; font-size:14px; border-radius:12px; }
+.waiting { background:color-mix(in srgb, #d9a400 14%, var(--card)); padding:10px 14px; border-radius:14px; font-weight:700 !important; }
+
 /* tablet portrait / small */
 @media (max-width: 1100px) { .v-today { grid-template-columns:1fr 1fr; } .v-today .sched { grid-row: span 2; } }
 @media (max-width: 760px) {
@@ -1205,20 +1287,22 @@ const ED_LABELS = {
   title: "Title", weather_entity: "Weather", default_view: "Start on", theme: "Default theme",
   first_day: "Week starts on", idle_return_minutes: "Return to start view when idle",
   name: "Name", initials: "Initials", calendars: "Calendars", add_calendar: "New events go to",
-  person: "Person (home / away dot)", chores: "Chore list", stars: "Star counter",
+  person: "Person (photo and home / away dot)", picture: "Picture URL", hide_pictures: "Use initials instead of photos", chores: "Chore list", stars: "Star counter",
   prefix_titles: "Title new events \"[Name] - Event\"", read_only: "Read only",
-  entity: "To-do list", rewards_list: "Rewards list", parent_pin: "Parent PIN",
+  entity: "To-do list", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", parent_pin: "Parent PIN",
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
   height_offset: "Height offset",
 };
 const ED_HELP = {
   idle_return_minutes: "0 turns this off",
+  picture: "Optional. Leave blank to use the person's photo from Home Assistant. Files in /config/www are /local/name.jpg",
   add_calendar: "Leave blank to use the first calendar",
   chores: "A Local To-do list. Each chore's description holds its time of day and stars, like \"morning 2⭐\"",
   stars: "A counter helper that holds this person's star balance",
   read_only: "Hidden from the New event picker",
   rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",
+  rewards_owed_list: "A Local To-do list. Each redeemed reward is added here until a parent marks it given",
   parent_pin: "Asked before editing chores or rewards. Leave blank for no PIN",
   planner_shared_name: "Defaults to the first shared calendar's name",
   height_offset: "Leave blank to size automatically",
@@ -1235,12 +1319,14 @@ const ED_SCHEMA = {
       { name: "first_day", selector: edSelect([{ value: "0", label: "Sunday" }, { value: "1", label: "Monday" }]) },
       { name: "idle_return_minutes", selector: edNum(0, 240, "min") },
     ] },
+    { name: "hide_pictures", selector: { boolean: {} } },
   ],
   person: [
     { type: "grid", name: "", schema: [{ name: "name", required: true, selector: { text: {} } }, { name: "initials", selector: { text: {} } }] },
     { name: "calendars", selector: edEnt("calendar", true) },
     { name: "add_calendar", selector: edEnt("calendar") },
     { name: "person", selector: edEnt("person") },
+    { name: "picture", selector: { text: {} } },
     { type: "grid", name: "", schema: [{ name: "chores", selector: edEnt("todo") }, { name: "stars", selector: edEnt("counter") }] },
     { name: "prefix_titles", selector: { boolean: {} } },
   ],
@@ -1255,6 +1341,7 @@ const ED_SCHEMA = {
   ],
   chores: [
     { name: "rewards_list", selector: edEnt("todo") },
+    { name: "rewards_owed_list", selector: edEnt("todo") },
     { name: "parent_pin", selector: { text: { type: "password" } } },
   ],
   planner: [
@@ -1268,9 +1355,9 @@ const ED_SCHEMA = {
   advanced: [{ name: "height_offset", selector: edNum(0, 400, "px") }],
 };
 
-const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "people", "shared", "lists",
-  "rewards_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset"];
-const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "chores", "stars", "prefix_titles", "read_only", "entity"];
+const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "people", "shared", "lists",
+  "rewards_list", "rewards_owed_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset"];
+const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity"];
 
 const edClean = (o, order) => {
   const out = {};
@@ -1387,14 +1474,14 @@ class SkyFamCardEditor extends HTMLElement {
     const set = (val) => { Object.assign(this._config, val); };
 
     this._form(slot("general"), ED_SCHEMA.general,
-      () => (c = this._config, { title: c.title, weather_entity: c.weather_entity, default_view: c.default_view || "today", theme: c.theme || "light", first_day: String(c.first_day ?? 0), idle_return_minutes: c.idle_return_minutes ?? 3 }),
+      () => (c = this._config, { title: c.title, weather_entity: c.weather_entity, default_view: c.default_view || "today", theme: c.theme || "light", first_day: String(c.first_day ?? 0), idle_return_minutes: c.idle_return_minutes ?? 3, hide_pictures: !!c.hide_pictures }),
       (v) => {
         set({ ...v, first_day: Number(v.first_day) || 0 });
         if (this._config.default_view === "today") delete this._config.default_view;
         if (this._config.theme === "light") delete this._config.theme;
         if (!this._config.first_day) delete this._config.first_day;
       });
-    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
+    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
     this._form(slot("planner"), ED_SCHEMA.planner,
       () => (c = this._config, { planner_start_hour: c.planner_start_hour ?? 6, planner_end_hour: c.planner_end_hour ?? 22, planner_hour_height: c.planner_hour_height ?? 64, planner_shared_name: c.planner_shared_name }),
       (v) => {
