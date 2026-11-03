@@ -2,6 +2,13 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.7.0: Chores on chosen days
+Commit `891d0e5`
+
+- Chores can run on chosen days: pick them in the chore form, or write `mon,thu`, `weekdays`, `weekends` or a day name in the description. On other days the chore is hidden and left out of the progress count; edit mode still shows it, dimmed, with its days.
+- Stars are added and taken with `counter.increment` / `counter.decrement`, so two screens changing stars at once can't overwrite each other. Keep each star counter's step at 1.
+- Buying a reward re-checks the balance when the parent confirms.
+
 ## v0.6.0: Lists on Today
 Commit `4b26a2c`
 
