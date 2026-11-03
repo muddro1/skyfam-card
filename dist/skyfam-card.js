@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.6.0";
+const SKYFAM_VERSION = "0.7.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -43,6 +43,15 @@ const PERIODS = [
   { id: "evening", label: "Evening", icon: "🌙" },
   { id: "anytime", label: "Anytime", icon: "✨" },
 ];
+// Day words a chore description can use ("mon,thu", "weekdays", "saturday"). None means every day.
+const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const DAY_WORDS = { weekdays: [1, 2, 3, 4, 5], weekday: [1, 2, 3, 4, 5], weekends: [0, 6], weekend: [0, 6], tues: [2], thur: [4], thurs: [4] };
+["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].forEach((n, i) => { DAY_WORDS[n] = DAY_WORDS[DAYS[i]] = [i]; });
+const parseDays = (text) => {
+  const set = new Set((String(text || "").toLowerCase().match(/[a-z]+/g) || []).flatMap((w) => DAY_WORDS[w] || []));
+  return set.size && set.size < 7 ? [...set].sort() : null;
+};
+const dayLabel = (days) => days.map((d) => DAYS[d][0].toUpperCase() + DAYS[d].slice(1)).join(", ");
 
 class SkyFamCard extends HTMLElement {
   constructor() {
@@ -288,11 +297,35 @@ class SkyFamCard extends HTMLElement {
     const pm = (item.description || "").toLowerCase().match(/morning|afternoon|evening|night|anytime/);
     let period = pm ? pm[0] : "anytime";
     if (period === "night") period = "evening";
-    return { ...item, stars, period, done: item.status === "completed" };
+    const days = parseDays(item.description);
+    return { ...item, stars, period, days, today: !days || days.includes(new Date().getDay()), done: item.status === "completed" };
+  }
+
+  // A kid's chores, only today's unless all is true.
+  _chores(p, all) {
+    const items = (this._todos[p.chores] || []).map((i) => this._parseChore(i));
+    return all ? items : items.filter((i) => i.today);
+  }
+
+  // Adds delta stars with counter.increment/decrement, one step per call. Each step is atomic in HA,
+  // so two screens changing stars at once can't overwrite each other (read-then-set_value could).
+  // Decrement stops at the counter's minimum.
+  async _addStars(entity, delta) {
+    const st = this._hass.states[entity];
+    if (!st || !delta) return;
+    const step = Number(st.attributes.step) || 1;
+    const n = Math.abs(delta) / step;
+    // shortcut: odd step sizes or huge amounts fall back to the racy set_value; fine for a family card.
+    if (!Number.isInteger(n) || n > 100) {
+      return this._svc("counter", "set_value", { value: Math.max(0, (Number(st.state) || 0) + delta) }, { entity_id: entity });
+    }
+    const svc = delta > 0 ? "increment" : "decrement";
+    try { await Promise.all(Array.from({ length: n }, () => this._hass.callService("counter", svc, {}, { entity_id: entity }))); }
+    catch (e) { this._toast(`Couldn't save: ${e.message || e}`); throw e; }
   }
 
   async _toggleChore(person, uid) {
-    const items = (this._todos[person.chores] || []).map((i) => this._parseChore(i));
+    const items = this._chores(person);
     const it = items.find((i) => i.uid === uid);
     if (!it) return;
     const toDone = !it.done;
@@ -301,10 +334,7 @@ class SkyFamCard extends HTMLElement {
     raw.status = toDone ? "completed" : "needs_action";
     this._render();
     await this._svc("todo", "update_item", { item: uid, status: raw.status }, { entity_id: person.chores });
-    if (it.stars && person.stars && this._hass.states[person.stars]) {
-      const cur = Number(this._hass.states[person.stars].state) || 0;
-      await this._svc("counter", "set_value", { value: Math.max(0, cur + (toDone ? it.stars : -it.stars)) }, { entity_id: person.stars });
-    }
+    if (it.stars && person.stars) await this._addStars(person.stars, toDone ? it.stars : -it.stars);
     if (toDone) {
       const left = items.filter((i) => i.uid !== uid && !i.done).length;
       this._celebrate(left === 0 ? `🎉 ${person.name} finished everything!` : it.stars ? `Nice job! +${it.stars} ⭐` : "Nice job! ✓", left === 0);
@@ -398,7 +428,8 @@ class SkyFamCard extends HTMLElement {
     const name = f.name.trim();
     if (!name) { this._toast("Give the chore a name"); return false; }
     const summary = (f.emoji.trim() ? f.emoji.trim() + " " : "") + name;
-    const description = f.period + (f.stars > 0 ? ` ${f.stars}⭐` : "");
+    const days = f.days && f.days.length && f.days.length < 7 ? f.days.map((d) => DAYS[d]).join(",") : "";
+    const description = f.period + (f.stars > 0 ? ` ${f.stars}⭐` : "") + (days ? ` ${days}` : "");
     if (f.uid) {
       const p = this._people.find((x) => x.name === f.person);
       await this._svc("todo", "update_item", { item: f.uid, rename: summary, description }, { entity_id: p.chores });
@@ -546,7 +577,7 @@ class SkyFamCard extends HTMLElement {
       dayBlock(now, "Today") + dayBlock(addDays(now, 1), "Tomorrow") + dayBlock(addDays(now, 2), addDays(now, 2).toLocaleDateString([], { weekday: "long" }));
     const kids = this._people.filter((p) => p.chores);
     const chores = kids.map((p) => {
-      const items = (this._todos[p.chores] || []).map((i) => this._parseChore(i));
+      const items = this._chores(p);
       const done = items.filter((i) => i.done).length;
       const next = items.filter((i) => !i.done).slice(0, 4);
       return `<div class="kid-mini" style="--c:${p.color}">
@@ -720,20 +751,21 @@ class SkyFamCard extends HTMLElement {
       <button class="btn ${ed ? "on" : ""}" data-act="chore-edit">${ed ? "✓ Done editing" : "✏️ Edit chores"}</button>
       ${this._config.rewards_list ? `<button class="btn" data-act="rewards-edit">🎁 Edit rewards</button>` : ""}</div>`;
     return bar + `<div class="chores ${ed ? "editing" : ""}">${kids.map((p) => {
-      const items = (this._todos[p.chores] || []).map((i) => this._parseChore(i));
+      const all = this._chores(p, true);
+      const items = all.filter((i) => i.today);
       const done = items.filter((i) => i.done).length;
       const groups = PERIODS.map((per) => {
-        const g = items.filter((i) => i.period === per.id);
+        const g = (ed ? all : items).filter((i) => i.period === per.id);
         if (!g.length) return "";
         return `<div class="per"><h4>${per.icon} ${per.label}</h4>${g.map((i) => `
-          <button class="chore ${i.done ? "done" : ""}" data-act="${ed ? "chore-open" : "chore"}" data-p="${esc(p.name)}" data-uid="${esc(i.uid)}">
-            <span class="chk">${i.done ? "✓" : ""}</span><span class="ct">${esc(i.summary)}</span>${i.stars ? `<span class="cs">${i.stars}⭐</span>` : ""}${ed ? `<span class="pen">✏️</span>` : ""}</button>`).join("")}</div>`;
+          <button class="chore ${i.done ? "done" : ""} ${i.today ? "" : "offday"}" data-act="${ed ? "chore-open" : "chore"}" data-p="${esc(p.name)}" data-uid="${esc(i.uid)}">
+            <span class="chk">${i.done ? "✓" : ""}</span><span class="ct">${esc(i.summary)}</span>${ed && i.days ? `<span class="cd">${dayLabel(i.days)}</span>` : ""}${i.stars ? `<span class="cs">${i.stars}⭐</span>` : ""}${ed ? `<span class="pen">✏️</span>` : ""}</button>`).join("")}</div>`;
       }).join("");
       const stars = p.stars && this._hass.states[p.stars];
       return `<div class="kid card" style="--c:${p.color}">
         <div class="kid-head">${this._ring(done, items.length, p)}<div class="kh-txt"><b>${esc(p.name)}</b><span>${done} of ${items.length} done today</span></div>
         ${stars ? `<button class="bank" data-act="rewards" data-p="${esc(p.name)}">⭐ ${esc(stars.state)}<small>Rewards</small></button>` : ""}</div>
-        <div class="kid-body">${groups || `<div class="empty small">No chores yet</div>`}
+        <div class="kid-body">${groups || `<div class="empty small">${all.length ? "No chores today 🎉" : "No chores yet"}</div>`}
         ${ed || !groups ? `<button class="addrow" data-act="chore-add" data-p="${esc(p.name)}">＋ Add a chore for ${esc(p.name)}</button>` : ""}</div></div>`;
     }).join("")}${this._owedPanel()}</div>`;
   }
@@ -831,6 +863,8 @@ class SkyFamCard extends HTMLElement {
           : kids.map((k) => `<label class="whochip" style="--c:${k.color}"><input type="checkbox" name="kid" value="${esc(k.name)}" ${m.kids.includes(k.name) ? "checked" : ""}><span>${esc(k.name)}</span></label>`).join("")}</div>
         <div class="lbl">When</div>
         <div class="who">${PERIODS.map((per) => `<label class="whochip" style="--c:var(--accent)"><input type="radio" name="period" value="${per.id}" ${m.period === per.id ? "checked" : ""}><span>${per.icon} ${per.label}</span></label>`).join("")}</div>
+        <div class="lbl">Days <small>(none picked = every day)</small></div>
+        <div class="who">${[0, 1, 2, 3, 4, 5, 6].map((i) => (i + (Number(this._config.first_day) || 0)) % 7).map((d) => `<label class="whochip" style="--c:var(--accent)"><input type="checkbox" name="day" value="${d}" ${(m.days || []).includes(d) ? "checked" : ""}><span>${dayLabel([d])}</span></label>`).join("")}</div>
         <div class="lbl">Stars earned</div>
         <div class="who">${[0, 1, 2, 3, 4, 5].map((n) => `<label class="whochip" style="--c:#d9a400"><input type="radio" name="stars" value="${n}" ${Number(m.stars) === n ? "checked" : ""}><span>${n ? n + " ⭐" : "None"}</span></label>`).join("")}</div>
         <div class="row end">${m.uid ? `<button class="btn danger" data-act="chore-del">Delete</button><span class="grow"></span>` : ""}<button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="chore-save">Save</button></div>`;
@@ -919,7 +953,10 @@ class SkyFamCard extends HTMLElement {
         const bal = Number(this._hass.states[p.stars].state) || 0;
         if (bal < r.cost) { this._toast(`Need ${r.cost - bal} more ⭐`); break; }
         this._openModal({ type: "confirm", text: `Spend ${r.cost} ⭐ on “${r.name}” for ${p.name}?`, onYes: async () => {
-          await this._svc("counter", "set_value", { value: bal - r.cost }, { entity_id: p.stars });
+          // balance may have changed while the confirm was open (another screen, a chore unticked)
+          const now = Number(this._hass.states[p.stars].state) || 0;
+          if (now < r.cost) { this._toast(`Need ${r.cost - now} more ⭐`); return; }
+          await this._addStars(p.stars, -r.cost);
           const owedList = this._config.rewards_owed_list;
           if (owedList) await this._svc("todo", "add_item", { item: `${r.icon || "🎁"} ${r.name}`,
             description: `${p.name} · ${r.cost}⭐ · redeemed ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}` }, { entity_id: owedList });
@@ -937,10 +974,7 @@ class SkyFamCard extends HTMLElement {
         const o = (this._owed() || []).find((x) => x.uid === el.dataset.uid);
         if (!o) break;
         this._gate(() => this._openModal({ type: "confirm", text: o.person && o.person.stars && o.cost ? `Cancel “${o.name}” and give ${o.cost} ⭐ back to ${o.person.name}?` : `Remove “${o.name}” from the owed list?`, onYes: async () => {
-          if (o.person && o.person.stars && o.cost && this._hass.states[o.person.stars]) {
-            const cur = Number(this._hass.states[o.person.stars].state) || 0;
-            await this._svc("counter", "set_value", { value: cur + o.cost }, { entity_id: o.person.stars });
-          }
+          if (o.person && o.person.stars && o.cost) await this._addStars(o.person.stars, o.cost);
           await this._svc("todo", "remove_item", { item: o.uid }, { entity_id: this._config.rewards_owed_list });
           this._toast(o.cost ? `Refunded ${o.cost} ⭐` : "Removed");
         } }));
@@ -950,7 +984,7 @@ class SkyFamCard extends HTMLElement {
       case "chore-add": {
         const kids = this._people.filter((x) => x.chores).map((x) => x.name);
         const preset = el.dataset.p ? [el.dataset.p] : kids;
-        this._gate(() => this._openModal({ type: "chore-form", kids: preset, period: "anytime", stars: 1, emoji: "", name: "" }));
+        this._gate(() => this._openModal({ type: "chore-form", kids: preset, period: "anytime", stars: 1, days: [], emoji: "", name: "" }));
         break;
       }
       case "chore-open": {
@@ -959,14 +993,14 @@ class SkyFamCard extends HTMLElement {
         if (!raw) break;
         const c = this._parseChore(raw);
         const [emoji, name] = splitEmoji(raw.summary);
-        this._openModal({ type: "chore-form", uid: raw.uid, person: p.name, emoji, name, period: c.period, stars: c.stars, kids: [p.name] });
+        this._openModal({ type: "chore-form", uid: raw.uid, person: p.name, emoji, name, period: c.period, stars: c.stars, days: c.days || [], kids: [p.name] });
         break;
       }
       case "chore-save": {
         const mod = this.shadowRoot.querySelector(".modal");
         const val = (n) => { const x = mod.querySelector(`[name="${n}"]:checked`) || mod.querySelector(`[name="${n}"]`); return x ? x.value : ""; };
         const f = { uid: this._modal.uid, person: this._modal.person, emoji: val("emoji"), name: val("name"), period: val("period") || "anytime",
-          stars: Number(val("stars")) || 0, kids: [...mod.querySelectorAll('[name="kid"]:checked')].map((x) => x.value) };
+          stars: Number(val("stars")) || 0, days: [...mod.querySelectorAll('[name="day"]:checked')].map((x) => Number(x.value)), kids: [...mod.querySelectorAll('[name="kid"]:checked')].map((x) => x.value) };
         el.disabled = true;
         this._saveChore(f).then((ok) => { if (ok) { this._closeModal(); this._toast(f.uid ? "Chore updated ✓" : "Chore added ✓"); } else el.disabled = false; }).catch(() => (el.disabled = false));
         break;
@@ -1158,7 +1192,8 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .chore .chk { width:38px; height:38px; font-size:20px; }
 .chore.done .chk, .todo.done .chk { background:var(--c, var(--accent)); border-color:var(--c, var(--accent)); }
 .chore.done .ct { text-decoration:line-through; color:var(--mute); }
-.ct { flex:1; } .cs { font-size:15px; color:#b88400; }
+.ct { flex:1; } .cs { font-size:15px; color:#b88400; } .cd { font-size:13px; font-weight:700; opacity:.7; }
+.chore.offday { opacity:.5; }
 
 /* lists */
 .lists { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:18px; align-items:start; }
@@ -1306,7 +1341,7 @@ const ED_HELP = {
   today: "Turn on for each list you want on the Today screen. They stack in order. With none on, the first list shows",
   picture: "Optional. Leave blank to use the person's photo from Home Assistant. Files in /config/www are /local/name.jpg",
   add_calendar: "Leave blank to use the first calendar",
-  chores: "A Local To-do list. Each chore's description holds its time of day and stars, like \"morning 2⭐\"",
+  chores: "A Local To-do list. Each chore's description holds its time of day, stars and optional days, like \"morning 2⭐ mon,thu\"",
   stars: "A counter helper that holds this person's star balance",
   read_only: "Hidden from the New event picker",
   rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",

@@ -158,8 +158,11 @@ Chores are plain to-do items, so they can also be added from the HA to-do screen
 
 - a time of day: `morning`, `afternoon`, `evening` (or `night`), or `anytime` (the default)
 - a star value written as `2⭐`
+- optional days: `mon,thu`, `weekdays`, `weekends` or full names like `saturday`. On other days the chore is hidden (edit mode still shows it, dimmed). No days means every day.
 
-So `🛏️ Make your bed` with the description `morning 1⭐` shows under Morning and is worth 1 star. A leading emoji in the name is shown as the chore's icon.
+So `🛏️ Make your bed` with the description `morning 1⭐` shows under Morning and is worth 1 star. `🗑️ Trash out` with `evening 3⭐ tue,fri` shows only on Tuesdays and Fridays.
+
+Stars are added and taken with `counter.increment` / `counter.decrement`, one step per star, so two screens changing stars at once can't overwrite each other. Leave the counter's step at 1. A leading emoji in the name is shown as the chore's icon.
 
 Rewards work the same way: the item name is the reward (with an optional leading emoji) and the description is its cost, for example `10⭐`.
 
@@ -182,6 +185,7 @@ node edit-test.js shots-edit          # clicks through adding/editing chores and
 node editor-test.js shots-editor      # drives the visual editor and checks the YAML it saves
 node owed-test.js shots-owed          # photos, redeeming a reward, marking it given, refunding
 node today-lists-test.js shots-tl     # several lists stacked on Today
+node days-stars-test.js shots-ds      # day-based chores, star changes via counter increment/decrement
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).

@@ -30,13 +30,14 @@ const todos = {
   "todo.skyfam_rewards_owed": [{uid:"o1", summary:"🎬 Pick the family movie", description:"Mia · 10⭐ · redeemed Nov 1", status:"needs_action"}, {uid:"o2", summary:"📱 15 min screen time", description:"Leo · 5⭐ · redeemed Nov 2", status:"needs_action"}, {uid:"o3", summary:"🍦 Ice cream treat", description:"Mia · 15⭐ · redeemed Oct 28", status:"completed"}],
   "todo.leo_chores": [
     {uid:"d1", summary:"🛏️ Make your bed", description:"morning 1⭐", status:"needs_action"}, {uid:"d2", summary:"🪥 Brush teeth", description:"morning", status:"needs_action"},
-    {uid:"d3", summary:"🧸 Pick up toys", description:"evening 2⭐", status:"needs_action"}, {uid:"d4", summary:"🌙 Pajamas on", description:"evening", status:"needs_action"}],
+    {uid:"d3", summary:"🧸 Pick up toys", description:"evening 2⭐", status:"needs_action"}, {uid:"d4", summary:"🌙 Pajamas on", description:"evening", status:"needs_action"},
+    {uid:"d5", summary:"🗑️ Trash out", description:"evening 3⭐ " + ["sun","mon","tue","wed","thu","fri","sat"].filter((_, i) => i !== new Date().getDay()).slice(0, 2).join(","), status:"needs_action"}],
 };
 const subs = {};
 const states = {
   "weather.forecast_home": { state:"rainy", attributes:{ temperature:71 } },
   "person.alex": { state:"home", attributes:{ entity_picture:"/test/avatars/alex.svg" } }, "person.jordan": { state:"not_home", attributes:{ entity_picture:"/test/avatars/jordan.svg" } }, "person.mia": { state:"unknown", attributes:{} },
-  "counter.mia_stars": { state:"12", attributes:{} }, "counter.leo_stars": { state:"4", attributes:{} },
+  "counter.mia_stars": { state:"12", attributes:{ step:1 } }, "counter.leo_stars": { state:"4", attributes:{ step:1 } },
 };
 const card = document.createElement("skyfam-card");
 let hass;
@@ -46,7 +47,7 @@ const mkHass = () => ({
   callService: async (d, s, data, target) => {
     console.log("SERVICE", d, s, JSON.stringify(data), JSON.stringify(target));
     const e = target.entity_id;
-    if (d === "counter") { states[e] = { state:String(data.value), attributes:{} }; card.hass = hass = mkHass(); }
+    if (d === "counter") { const cur = Number(states[e].state) || 0; const v = s === "increment" ? cur + 1 : s === "decrement" ? Math.max(0, cur - 1) : data.value; states[e] = { state:String(v), attributes:{ step:1 } }; card.hass = hass = mkHass(); }
     const push = () => subs[e] && subs[e]({items: todos[e].map(x=>({...x}))});
     if (d === "todo" && s === "update_item") { const it = todos[e].find(i=>i.uid===data.item); if (data.status) it.status = data.status; if (data.rename) it.summary = data.rename; if (data.description !== undefined) it.description = data.description; push(); }
     if (d === "todo" && s === "add_item") { todos[e].push({uid:"n"+Math.random(), summary:data.item, description:data.description, status:"needs_action"}); push(); }
