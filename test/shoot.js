@@ -6,7 +6,7 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 const out = process.argv[2] || "shots";
 const W = Number(process.argv[3] || 1280), H = Number(process.argv[4] || 800);
-const views = process.argv.slice(5).length ? process.argv.slice(5) : ["today", "week", "month", "chores", "lists"];
+const views = process.argv.slice(5).length ? process.argv.slice(5) : ["today", "planner", "week", "month", "chores", "lists"];
 fs.mkdirSync(out, { recursive: true });
 const srv = http.createServer((req, res) => {
   const p = path.join(root, decodeURIComponent(req.url.split("?")[0]));
@@ -16,6 +16,9 @@ const srv = http.createServer((req, res) => {
 }).listen(8765, async () => {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+  // FAKE_TIME="2026-11-03T15:30:00" pins the clock; DARK=1 starts in dark mode
+  if (process.env.FAKE_TIME && page.clock) await page.clock.install({ time: new Date(process.env.FAKE_TIME) });
+  if (process.env.DARK) await page.addInitScript(() => localStorage.setItem("skyfam:theme", JSON.stringify("dark")));
   const logs = [];
   page.on("console", (m) => logs.push(`[${m.type()}] ${m.text()}`));
   page.on("pageerror", (e) => logs.push(`[pageerror] ${e.message}`));

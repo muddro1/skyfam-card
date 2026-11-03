@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.2.0";
+const SKYFAM_VERSION = "0.3.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -25,10 +25,17 @@ const WEATHER_ICON = {
 };
 const NAV = [
   { id: "today", label: "Today", mdi: "mdi:home-heart", emoji: "🏠" },
+  { id: "planner", label: "Planner", mdi: "mdi:calendar-account", emoji: "🧭" },
   { id: "week", label: "Week", mdi: "mdi:calendar-week", emoji: "🗓️" },
   { id: "month", label: "Month", mdi: "mdi:calendar-month", emoji: "📅" },
   { id: "chores", label: "Chores", mdi: "mdi:star-circle", emoji: "⭐" },
   { id: "lists", label: "Lists", mdi: "mdi:format-list-checks", emoji: "📝" },
+];
+const THEMES = [
+  { id: "light", label: "Light", icon: "☀️" },
+  { id: "dark", label: "Dark", icon: "🌙" },
+  { id: "auto", label: "Auto", icon: "🌓" },
+  { id: "sun", label: "Sunset", icon: "🌇" },
 ];
 const PERIODS = [
   { id: "morning", label: "Morning", icon: "🌅" },
@@ -84,6 +91,7 @@ class SkyFamCard extends HTMLElement {
     this._calOwners = {};
     [...this._people, ...this._shared].forEach((o) => o.calendars.forEach((c) => (this._calOwners[c] = o)));
     if (config.default_view) this._view = config.default_view;
+    this._scrollNow = this._view === "planner";
     this._built = false;
   }
 
@@ -94,16 +102,26 @@ class SkyFamCard extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (!this._built) this._build();
-    if (this._config.theme === "auto") {
-      const app = this.shadowRoot.querySelector(".app");
-      if (app) app.classList.toggle("dark", !!(hass.themes && hass.themes.darkMode));
-    }
+    this._applyTheme();
     if (first || !this._subscribed) this._subscribe();
     const sig = this._stateSig();
     if (sig !== this._sig) {
       this._sig = sig;
       this._render();
     }
+  }
+
+  _themeMode() { return this._load("theme", null) || this._config.theme || "light"; }
+  _isDark() {
+    const m = this._themeMode();
+    if (m === "dark") return true;
+    if (m === "auto") return !!(this._hass && this._hass.themes && this._hass.themes.darkMode);
+    if (m === "sun") { const s = this._hass && this._hass.states["sun.sun"]; return !!s && s.state === "below_horizon"; }
+    return false;
+  }
+  _applyTheme() {
+    const app = this.shadowRoot && this.shadowRoot.querySelector(".app");
+    if (app) app.classList.toggle("dark", this._isDark());
   }
 
   _fit() {
@@ -129,7 +147,7 @@ class SkyFamCard extends HTMLElement {
 
   _stateSig() {
     const h = this._hass;
-    const ids = [this._config.weather_entity, ...this._people.map((p) => p.person), ...this._people.map((p) => p.stars)].filter(Boolean);
+    const ids = [this._config.weather_entity, "sun.sun", ...this._people.map((p) => p.person), ...this._people.map((p) => p.stars)].filter(Boolean);
     return ids.map((id) => { const s = h.states[id]; return s ? s.state + (s.attributes.temperature ?? "") : "-"; }).join("|");
   }
 
@@ -156,6 +174,10 @@ class SkyFamCard extends HTMLElement {
 
   _range() {
     const today = startOfDay(new Date());
+    if (this._view === "planner") {
+      const d = startOfDay(this._anchor);
+      return [d, addDays(d, 1)];
+    }
     if (this._view === "week") {
       const s = this._weekStart(this._anchor);
       return [s, addDays(s, 7)];
@@ -344,11 +366,10 @@ class SkyFamCard extends HTMLElement {
   /* ---------- shell ---------- */
   _build() {
     this._built = true;
-    const theme = this._config.theme;
     const off = this._config.height_offset;
     if (off != null) this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
     this.shadowRoot.innerHTML = `<style>${SKYFAM_CSS}</style>
-      <div class="app ${theme === "dark" ? "dark" : ""}">
+      <div class="app">
         <nav class="rail"></nav>
         <main class="main"><header class="top"></header><section class="body"></section></main>
         <button class="fab" data-act="add-event" title="Add event">＋</button>
@@ -376,6 +397,7 @@ class SkyFamCard extends HTMLElement {
       this._view = this._config.default_view || "today";
       this._anchor = startOfDay(new Date());
       this._modal = null;
+      this._scrollNow = this._view === "planner";
       this._render();
     }
     // day rollover / periodic refresh
@@ -404,7 +426,9 @@ class SkyFamCard extends HTMLElement {
     body.className = `body v-${this._view}`;
     if (this._prevView === this._view) body.scrollTop = scroll;
     this._prevView = this._view;
-    root.querySelector(".fab").style.display = ["today", "week", "month"].includes(this._view) ? "" : "none";
+    root.querySelector(".fab").style.display = ["today", "planner", "week", "month"].includes(this._view) ? "" : "none";
+    this._applyTheme();
+    if (this._view === "planner" && this._scrollNow && root.querySelector(".pl-scroll")) { this._scrollNow = false; requestAnimationFrame(() => this._scrollPlannerToNow()); }
     this._renderModal();
     if (keep) {
       const el = root.querySelector(`[data-keep="${keep.k}"]`);
@@ -425,10 +449,12 @@ class SkyFamCard extends HTMLElement {
       return `<button class="chip ${this._hidden.has(p.key) ? "off" : ""}" data-act="filter" data-k="${esc(p.key)}" style="--c:${p.color}">
         <span class="av">${esc((p.initials || p.name[0]).toUpperCase())}${home === null ? "" : `<i class="dot ${home ? "home" : "away"}"></i>`}</span>${esc(p.name)}</button>`;
     }).join("");
+    const tm = THEMES.find((t) => t.id === this._themeMode()) || THEMES[0];
+    const themeBtn = `<button class="themebtn" data-act="theme" title="Theme: ${tm.label}">${tm.icon}<span>${tm.label}</span></button>`;
     return `<div class="when"><div class="clock"></div><div class="date">${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</div></div>
       ${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ""}
-      ${weather}
-      <div class="chips">${["today", "week", "month"].includes(this._view) ? chips : ""}</div>`;
+      ${weather}${themeBtn}
+      <div class="chips">${["today", "planner", "week", "month"].includes(this._view) ? chips : ""}</div>`;
   }
 
   /* ---------- views ---------- */
@@ -494,6 +520,83 @@ class SkyFamCard extends HTMLElement {
 
   _navBar(label) {
     return `<div class="navbar"><button class="nb" data-act="prev">‹</button><button class="nb today-btn" data-act="today">Today</button><button class="nb" data-act="next">›</button><h2>${label}</h2></div>`;
+  }
+
+  _plannerCols() {
+    const cols = this._people.filter((p) => !this._hidden.has(p.key)).map((p) => ({ key: p.key, name: p.name, color: p.color, owner: p, initials: p.initials }));
+    const shared = this._shared.filter((s) => !this._hidden.has(s.key));
+    if (shared.length) cols.push({ key: "shared", name: this._config.planner_shared_name || shared[0].name, color: shared[0].color, shared: true });
+    return cols;
+  }
+
+  _view_planner() {
+    const day = startOfDay(this._anchor);
+    const events = this._eventsFor(...this._range());
+    const now = new Date();
+    const H = Number(this._config.planner_hour_height) || 64;
+    const h0 = Math.max(0, Math.min(23, Number(this._config.planner_start_hour ?? 6)));
+    const h1 = Math.max(h0 + 1, Math.min(24, Number(this._config.planner_end_hour ?? 22)));
+    const cols = this._plannerCols();
+    const label = day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+    if (events === null) return this._navBar(label) + `<div class="empty">Loading…</div>`;
+    const list = this._onDay(this._visible(events), day);
+    const colOf = (e) => (!e.owner || e.owner.shared ? "shared" : e.owner.key);
+    const ds = +day;
+    const hourRows = [...Array(h1 - h0)].map((_, i) => `<div class="pl-hr" style="top:${i * H}px"><span>${new Date(ds + (h0 + i) * 3600000).toLocaleTimeString([], { hour: "numeric" }).replace(/\s?([AP])M/i, (m, a) => a.toLowerCase())}</span></div>`).join("");
+    const allCells = [];
+    const body = cols.map((c) => {
+      const mine = list.filter((e) => colOf(e) === c.key);
+      const allDay = mine.filter((e) => e.allDay);
+      const timed = mine.filter((e) => !e.allDay).map((e) => {
+        const st = Math.max((e.start - ds) / 3600000, h0), en = Math.min((e.end - ds) / 3600000, h1);
+        return { e, st, en: Math.max(en, st + 0.4) };
+      }).filter((x) => x.st < h1 && x.en > h0).sort((a, b) => a.st - b.st || b.en - a.en);
+      // lay out overlapping events side by side
+      let cluster = [], clusterEnd = -1;
+      const flush = () => { const lanes = Math.max(...cluster.map((x) => x.lane)) + 1; cluster.forEach((x) => (x.lanes = lanes)); cluster = []; };
+      timed.forEach((x) => {
+        if (x.st >= clusterEnd && cluster.length) flush();
+        const used = new Set(cluster.filter((y) => y.en > x.st).map((y) => y.lane));
+        let lane = 0; while (used.has(lane)) lane++;
+        x.lane = lane; cluster.push(x); clusterEnd = Math.max(clusterEnd, x.en);
+      });
+      if (cluster.length) flush();
+      const blocks = timed.map(({ e, st, en, lane, lanes }) => {
+        const top = (st - h0) * H, height = Math.max((en - st) * H - 3, 24);
+        const past = e.end < now;
+        return `<button class="pl-ev ${past ? "past" : ""} ${height < 44 ? "short" : ""}" style="--c:${e.color};top:${top}px;height:${height}px;left:calc(${(lane / lanes) * 100}% + 3px);width:calc(${100 / lanes}% - 6px)" data-act="event" data-id="${esc(this._evId(e))}">
+          <b>${esc(e.title)}</b><span>${this._fmtTime(e.start)} – ${this._fmtTime(e.end)}${e.location ? ` · ${esc(e.location.split(",")[0])}` : ""}</span></button>`;
+      }).join("");
+      const slots = [...Array(h1 - h0)].map((_, i) => `<div class="pl-slot" style="top:${i * H}px;height:${H}px" data-act="slot" data-h="${h0 + i}" data-who="${esc(c.shared ? (this._shared[0] || {}).key || "" : c.key)}"></div>`).join("");
+      allCells.push(`<div class="pl-all" style="--c:${c.color}">${allDay.map((e) => this._evPill(e)).join("")}</div>`);
+      return `<div class="pl-col" style="--c:${c.color}"><div class="pl-grid" style="height:${(h1 - h0) * H}px">${slots}${blocks}</div></div>`;
+    }).join("");
+    const heads = cols.map((c) => {
+      const ps = c.owner && c.owner.person && this._hass.states[c.owner.person];
+      return `<div class="pl-head" style="--c:${c.color}"><span class="av">${esc((c.initials || c.name[0]).toUpperCase())}${ps ? `<i class="dot ${ps.state === "home" ? "home" : "away"}"></i>` : ""}</span><b>${esc(c.name)}</b></div>`;
+    }).join("");
+    const nowLine = sameDay(day, now) && now.getHours() + now.getMinutes() / 60 >= h0 && now.getHours() < h1
+      ? `<div class="pl-now" style="top:${(now.getHours() + now.getMinutes() / 60 - h0) * H}px"></div>` : "";
+    const tmpl = `var(--plt, 64px) repeat(${cols.length}, minmax(var(--plc, 150px), 1fr))`;
+    return this._navBar(label) + `<div class="planner"><div class="pl-scroll">
+      <div class="pl-top">
+        <div class="pl-heads" style="grid-template-columns:${tmpl}"><div></div>${heads}</div>
+        <div class="pl-allrow" style="grid-template-columns:${tmpl}"><div class="pl-all-label">All day</div>${allCells.join("")}</div>
+      </div>
+      <div class="pl-body" style="grid-template-columns:${tmpl}">
+        <div class="pl-times"><div class="pl-grid" style="height:${(h1 - h0) * H}px">${hourRows}</div></div>
+        ${body}${nowLine}</div></div></div>`;
+  }
+
+  _scrollPlannerToNow() {
+    const sc = this.shadowRoot.querySelector(".pl-scroll");
+    if (!sc) return;
+    const top = this.shadowRoot.querySelector(".pl-top");
+    const head = top ? top.offsetHeight : 0;
+    const line = this.shadowRoot.querySelector(".pl-now");
+    const evs = [...this.shadowRoot.querySelectorAll(".pl-ev")].map((e) => e.offsetTop);
+    const target = line ? line.offsetTop : evs.length ? Math.min(...evs) : 0;
+    sc.scrollTop = Math.max(0, target + head - 140);
   }
 
   _view_week() {
@@ -671,7 +774,7 @@ class SkyFamCard extends HTMLElement {
     const a = el.dataset.act;
     const all = () => this._eventsFor(...this._range()) || [];
     switch (a) {
-      case "view": this._view = el.dataset.v; this._anchor = startOfDay(new Date()); this._render(); break;
+      case "view": this._view = el.dataset.v; this._anchor = startOfDay(new Date()); this._scrollNow = this._view === "planner"; this._render(); break;
       case "filter": {
         const k = el.dataset.k;
         this._hidden.has(k) ? this._hidden.delete(k) : this._hidden.add(k);
@@ -679,10 +782,21 @@ class SkyFamCard extends HTMLElement {
       }
       case "prev": case "next": {
         const dir = a === "next" ? 1 : -1;
-        this._anchor = this._view === "month" ? new Date(this._anchor.getFullYear(), this._anchor.getMonth() + dir, 1) : addDays(this._anchor, 7 * dir);
+        this._anchor = this._view === "month" ? new Date(this._anchor.getFullYear(), this._anchor.getMonth() + dir, 1) : addDays(this._anchor, (this._view === "planner" ? 1 : 7) * dir);
         this._render(); break;
       }
-      case "today": this._anchor = startOfDay(new Date()); this._render(); break;
+      case "today": this._anchor = startOfDay(new Date()); this._scrollNow = this._view === "planner"; this._render(); break;
+      case "theme": {
+        const i = THEMES.findIndex((t) => t.id === this._themeMode());
+        const next = THEMES[(i + 1) % THEMES.length];
+        this._save("theme", next.id); this._render(); this._toast(`${next.icon} ${next.label} mode${next.id === "sun" ? ": dark after sunset" : next.id === "auto" ? ": follows Home Assistant" : ""}`);
+        break;
+      }
+      case "slot": {
+        const h = Number(el.dataset.h);
+        this._openModal({ type: "add", date: ymd(this._anchor), start: `${pad(h)}:00`, end: `${pad(Math.min(23, h + 1))}:${h + 1 > 23 ? "59" : "00"}`, who: el.dataset.who || (this._shared[0] || this._people[0]).key });
+        break;
+      }
       case "event": {
         const e = all().find((x) => this._evId(x) === el.dataset.id);
         if (e) this._openModal({ type: "event", ev: e });
@@ -831,7 +945,12 @@ const SKYFAM_CSS = `
 button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; text-align:left; -webkit-tap-highlight-color:transparent; }
 .modal-host { display:contents; }
 .app { position:relative; display:grid; grid-template-columns: 92px 1fr; grid-template-rows: minmax(0,1fr); height: calc(100dvh - var(--skyfam-offset, 56px)); background:var(--bg); color:var(--ink); overflow:hidden; }
-.app.dark { --bg:#1b1a19; --card:#262422; --ink:#f1ece4; --mute:#a59c90; --line:#34312d; }
+.app.dark { --bg:#141413; --card:#232120; --ink:#f3eee6; --mute:#a59c90; --line:#363230; --accent:#7fb2d6; color-scheme:dark; }
+.app.dark .card, .app.dark .wx, .app.dark .nb, .app.dark .planner { box-shadow:none; }
+.app.dark .pill.allday, .app.dark .av, .app.dark .whochip input:checked + span, .app.dark .btn.primary, .app.dark .fab, .app.dark .tab.on, .app.dark .dh.today .dd { color:#141413; }
+.app.dark .btn.danger { background:#4a2422; color:#ffb4ab; }
+.app.dark .stars, .app.dark .bank, .app.dark .cs, .app.dark .rc, .app.dark .star-lbl { color:#f2c14e; }
+.app.dark .chore.done .chk, .app.dark .todo.done .chk { color:#141413; }
 .rail { display:flex; flex-direction:column; gap:6px; padding:18px 10px; background:var(--card); border-right:1px solid var(--line); }
 .nav { display:flex; flex-direction:column; align-items:center; gap:4px; padding:12px 4px; border-radius:18px; color:var(--mute); font-size:12px; font-weight:700; }
 .nav ha-icon { --mdc-icon-size:28px; } .nav .emo { font-size:24px; }
@@ -954,6 +1073,37 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .confetti span { position:absolute; top:-40px; animation:fall 2.6s ease-in forwards; }
 @keyframes fall { to { transform: translateY(110vh) rotate(540deg); opacity:.8; } }
 
+/* theme button */
+.themebtn { display:flex; align-items:center; gap:6px; background:var(--card); border-radius:999px; padding:8px 14px; font-weight:800; font-size:14px; color:var(--mute); box-shadow:0 1px 3px rgba(0,0,0,.05); }
+.themebtn { font-size:18px; } .themebtn span { font-size:13px; }
+
+/* planner */
+.v-planner { display:flex; flex-direction:column; padding-bottom:16px; }
+.planner { flex:1; min-height:0; display:flex; flex-direction:column; background:var(--card); border-radius:22px; overflow:hidden; box-shadow:0 1px 4px rgba(60,40,10,.06); }
+.pl-top { position:sticky; top:0; z-index:4; background:var(--card); border-bottom:1px solid var(--line); min-width:fit-content; }
+.pl-heads { display:grid; padding:10px 0 6px; }
+.pl-allrow { display:grid; }
+.pl-head { display:flex; align-items:center; gap:8px; padding:0 10px; font-size:17px; min-width:0; }
+.pl-head b { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pl-scroll { flex:1; min-height:0; overflow:auto; }
+.pl-body { display:grid; position:relative; min-width:fit-content; padding-top:10px; }
+.pl-col { border-left:1px solid var(--line); min-width:0; }
+.pl-all { min-height:34px; padding:4px; display:flex; flex-direction:column; gap:4px; border-left:1px solid var(--line); min-width:0; }
+.pl-all .pill { -webkit-line-clamp:1; padding:4px 8px; font-size:13px; }
+.pl-all-label { font-size:11px; font-weight:800; color:var(--mute); text-transform:uppercase; align-self:center; text-align:center; }
+.pl-grid { position:relative; }
+.pl-hr { position:absolute; left:0; right:0; border-top:1px solid var(--line); }
+.pl-hr span { position:absolute; top:-9px; right:8px; font-size:12px; font-weight:800; color:var(--mute); background:var(--card); padding:0 2px; }
+.pl-times .pl-grid { border-right:0; }
+.pl-slot { position:absolute; left:0; right:0; border-top:1px solid var(--line); cursor:pointer; }
+.pl-slot:hover { background:color-mix(in srgb, var(--c) 7%, transparent); }
+.pl-ev { position:absolute; z-index:1; display:flex; flex-direction:column; gap:1px; padding:5px 8px; border-radius:10px; background:color-mix(in srgb, var(--c) 24%, var(--card)); border-left:5px solid var(--c); overflow:hidden; text-align:left; }
+.pl-ev b { font-size:14px; line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pl-ev span { font-size:12px; color:var(--mute); font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pl-ev.short { flex-direction:row; align-items:center; gap:6px; padding:2px 8px; } .pl-ev.past { opacity:.5; }
+.pl-now { position:absolute; left:var(--plt, 64px); right:0; height:2px; background:#e0453a; z-index:2; pointer-events:none; margin-top:10px; }
+.pl-now::before { content:""; position:absolute; left:-6px; top:-5px; width:12px; height:12px; border-radius:50%; background:#e0453a; }
+
 /* editing */
 .chorebar { display:flex; gap:10px; margin:4px 0 14px; flex-wrap:wrap; }
 .btn.on { background:var(--accent); color:#fff; } .btn.danger { background:#f8dcd8; color:#a3271b; } .grow { flex:1; }
@@ -987,6 +1137,10 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
   .fab { right:16px; bottom:84px; width:58px; height:58px; }
   .toast { bottom:90px; }
   .agenda { grid-template-columns:62px 5px 1fr; } .agenda .a-who { display:none; }
+  .themebtn span { display:none; }
+  .v-planner { padding-bottom:84px; }
+  .planner { --plt:46px; --plc:118px; }
+  .nav { padding:6px 4px; }
 }
 `;
 

@@ -19,12 +19,17 @@ It uses only native Home Assistant entities, so everything also works with voice
 ## Views
 
 - **Today**: schedule for today and the next two days, each kid's chore progress, and your first list.
+- **Planner**: today as an hourly timeline with a column for each person (plus one for shared calendars), an all-day row, and a red line at the current time. Tap an empty slot to add an event for that person at that hour. Opens scrolled to now.
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
 - **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card.
 
 On screens under 760px wide the side rail becomes a bottom tab bar and the views stack.
+
+**Dark mode**: the button next to the weather cycles Light → Dark → Auto (follows Home Assistant's theme) → Sunset (dark while `sun.sun` is below the horizon). The choice is saved per device, so a kiosk can use Sunset while phones stay on Auto.
+
+![Planner](docs/planner.png)
 
 | Week | Month |
 |---|---|
@@ -38,6 +43,8 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 
 ![Editing chores and rewards](docs/editing.png)
 
+![Dark mode](docs/dark.png)
+
 ## Install
 
 ### HACS (custom repository)
@@ -48,7 +55,7 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 ### Manual
 
 1. Copy `dist/skyfam-card.js` to `/config/www/skyfam-card.js`.
-2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.2.0` as a **JavaScript module**. Bump the `?v=` when you update the file.
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.3.0` as a **JavaScript module**. Bump the `?v=` when you update the file.
 
 ## Setup
 
@@ -115,11 +122,15 @@ rewards_list: todo.skyfam_rewards
 | `rewards` | `[]` | Static rewards, as `name`, `cost`, `icon`. Only used when `rewards_list` is not set. |
 | `weather_entity` | none | Current temperature, today's high/low, and a forecast in each week column. |
 | `title` | none | Shown next to the clock on wide screens. |
-| `default_view` | `today` | `today`, `week`, `month`, `chores` or `lists`. |
+| `default_view` | `today` | `today`, `planner`, `week`, `month`, `chores` or `lists`. |
+| `planner_start_hour` | `6` | First hour shown in Planner. |
+| `planner_end_hour` | `22` | Last hour shown in Planner. |
+| `planner_hour_height` | `64` | Pixels per hour in Planner. |
+| `planner_shared_name` | first shared calendar's name | Title of the Planner column for shared calendars. |
 | `idle_return_minutes` | `3` | Return to the default view after this many idle minutes. `0` turns it off. |
 | `first_day` | `0` | First day of the week. |
 | `parent_pin` | none | Asks for this PIN before editing chores or rewards. Unlocks for 5 minutes. A soft lock for kids, not real security: anyone who can edit the dashboard can read it. |
-| `theme` | `light` | `light`, `dark` or `auto` (follows Home Assistant). |
+| `theme` | `light` | Starting theme: `light`, `dark`, `auto` (follows Home Assistant) or `sun` (dark after sunset). The header button overrides it per device. |
 | `height_offset` | auto | Pixels to subtract from the screen height. The card measures this itself; set it only if it sizes wrong. |
 
 ### How chores and rewards are stored
@@ -144,6 +155,7 @@ The card is one file with no build step: `dist/skyfam-card.js`.
 ```sh
 cd test
 node shoot.js shots 1280 800          # every view at tablet size
+FAKE_TIME=2026-11-03T15:30:00 DARK=1 node shoot.js shots-dark 1280 800   # pinned clock, dark mode
 node shoot.js shots-phone 390 844     # phone size
 node edit-test.js shots-edit          # clicks through adding/editing chores and rewards
 ```
