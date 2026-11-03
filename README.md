@@ -63,7 +63,18 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 2. **Stars**: Settings → Devices & services → Helpers → Create helper → **Counter**, one per kid, minimum 0.
 3. **Rewards** (optional): one more Local To-do list, for example "SkyFam Rewards".
 4. **Nightly reset**: add the automation in [`examples/reset-chores-automation.yaml`](examples/reset-chores-automation.yaml) so chores reopen every night. Earned stars stay.
-5. Add a dashboard with a single **Panel** view and the card config below.
+5. Add a dashboard with a single **Panel** view, then add the **SkyFam family hub** card from the card picker. It starts pre-filled with the people, calendars and weather Home Assistant already has.
+
+### Visual editor
+
+Everything below can be set from the card's **Edit** screen instead of YAML:
+
+- **General**: title, weather, which view to start on, default theme, first day of the week, idle timeout.
+- **People**: one row per person with a color picker, calendars, the calendar new events go to, home/away person, chore list, star counter and the "[Name] - Event" title option. Reorder with the arrows; the remove button asks once before deleting.
+- **Shared calendars**: family, birthdays, trash day and so on, with a read-only switch.
+- **Lists**, **Chores and rewards** (rewards list, parent PIN), **Planner** hours and **Advanced** layout.
+
+The preview updates as you type. Defaults are left out of the saved YAML so it stays short.
 
 ## Configuration
 
@@ -150,7 +161,9 @@ Calendar events titled `[Name] - Event` are shown in that person's color with th
 
 The card is one file with no build step: `dist/skyfam-card.js`.
 
-`test/harness.html` renders the card with a mock `hass` object and sample data. To take screenshots with Playwright:
+`test/harness.html` renders the card. `test/editor.html` shows the visual editor beside a live preview, with a small stand-in for Home Assistant's `ha-form`.
+
+The harness renders the card with a mock `hass` object and sample data. To take screenshots with Playwright:
 
 ```sh
 cd test
@@ -158,6 +171,7 @@ node shoot.js shots 1280 800          # every view at tablet size
 FAKE_TIME=2026-11-03T15:30:00 DARK=1 node shoot.js shots-dark 1280 800   # pinned clock, dark mode
 node shoot.js shots-phone 390 844     # phone size
 node edit-test.js shots-edit          # clicks through adding/editing chores and rewards
+node editor-test.js shots-editor      # drives the visual editor and checks the YAML it saves
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).

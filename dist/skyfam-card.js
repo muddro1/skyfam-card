@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.3.0";
+const SKYFAM_VERSION = "0.4.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -90,10 +90,39 @@ class SkyFamCard extends HTMLElement {
     this._lists = (config.lists || []).map((l) => (typeof l === "string" ? { entity: l } : l));
     this._calOwners = {};
     [...this._people, ...this._shared].forEach((o) => o.calendars.forEach((c) => (this._calOwners[c] = o)));
-    if (config.default_view) this._view = config.default_view;
+    if (config.default_view && config.default_view !== this._prevDefault) this._view = config.default_view;
+    this._prevDefault = config.default_view;
     this._scrollNow = this._view === "planner";
-    this._built = false;
+    // live reconfigure (the visual editor calls setConfig on every change)
+    const calSig = JSON.stringify(Object.keys(this._calOwners).sort());
+    if (calSig !== this._calSig) { this._events = {}; this._calSig = calSig; }
+    const subSig = JSON.stringify([this._todoEntities(), this._config.weather_entity || ""]);
+    if (this._subSig && subSig !== this._subSig) this._teardown();
+    this._subSig = subSig;
+    this._sig = "";
+    if (this._hass) {
+      if (!this._built) this._build();
+      const off = this._config.height_offset;
+      if (off != null && off !== "") this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
+      if (!this._subscribed) this._subscribe();
+      this._render();
+    }
   }
+
+  _todoEntities() {
+    return [...new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores), this._config.rewards_list].filter(Boolean))];
+  }
+  _teardown() {
+    this._unsubs.forEach((u) => { try { Promise.resolve(u).then((f) => f && f()); } catch (e) {} });
+    this._unsubs = [];
+    this._subscribed = false;
+  }
+
+  // HA sets this on cards shown in the card editor preview and in dashboard edit mode
+  set preview(v) { this._preview = !!v; this.toggleAttribute("preview", this._preview); }
+  get preview() { return !!this._preview; }
+
+  static getConfigElement() { return document.createElement("skyfam-card-editor"); }
 
   getCardSize() { return 12; }
   getGridOptions() { return { columns: "full", rows: "auto" }; }
@@ -125,7 +154,7 @@ class SkyFamCard extends HTMLElement {
   }
 
   _fit() {
-    if (this._config && this._config.height_offset != null) return;
+    if (this._config && this._config.height_offset != null && this._config.height_offset !== "") return;
     const top = Math.max(0, Math.round(this.getBoundingClientRect().top + (window.scrollY || 0)));
     this.style.setProperty("--skyfam-offset", top + "px");
   }
@@ -140,9 +169,7 @@ class SkyFamCard extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._tick);
     window.removeEventListener("resize", this._onResize);
-    this._unsubs.forEach((u) => { try { Promise.resolve(u).then((f) => f && f()); } catch (e) {} });
-    this._unsubs = [];
-    this._subscribed = false;
+    this._teardown();
   }
 
   _stateSig() {
@@ -159,8 +186,9 @@ class SkyFamCard extends HTMLElement {
     if (!this._hass || !this._hass.connection || !this.isConnected) return;
     this._subscribed = true;
     const conn = this._hass.connection;
-    const todoEntities = new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores).filter(Boolean), this._config.rewards_list].filter(Boolean));
-    todoEntities.forEach((entity) => {
+    this._todos = {};
+    this._forecast = [];
+    this._todoEntities().forEach((entity) => {
       const u = conn.subscribeMessage((msg) => { this._todos[entity] = msg.items || []; this._render(); },
         { type: "todo/item/subscribe", entity_id: entity }).catch((e) => console.warn("skyfam todo", entity, e));
       this._unsubs.push(u);
@@ -367,7 +395,7 @@ class SkyFamCard extends HTMLElement {
   _build() {
     this._built = true;
     const off = this._config.height_offset;
-    if (off != null) this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
+    if (off != null && off !== "") this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
     this.shadowRoot.innerHTML = `<style>${SKYFAM_CSS}</style>
       <div class="app">
         <nav class="rail"></nav>
@@ -376,6 +404,8 @@ class SkyFamCard extends HTMLElement {
         <div class="modal-host"></div><div class="toast"></div><div class="confetti"></div>
       </div>`;
     const root = this.shadowRoot;
+    if (this._listening) return;
+    this._listening = true;
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.dataset && e.target.dataset.add) {
@@ -933,12 +963,33 @@ class SkyFamCard extends HTMLElement {
     clearTimeout(this._confT); this._confT = setTimeout(() => (host.innerHTML = ""), 3200);
   }
 
-  static getStubConfig() {
-    return { people: [{ name: "Me", calendars: [] }] };
+  // Pre-fills a new card from the people, calendars and weather already in Home Assistant
+  static getStubConfig(hass) {
+    const ids = hass ? Object.keys(hass.states) : [];
+    const cals = ids.filter((e) => e.startsWith("calendar."));
+    const used = new Set();
+    const people = ids.filter((e) => e.startsWith("person.")).slice(0, 6).map((pid, i) => {
+      const raw = (hass.states[pid].attributes.friendly_name || pid.split(".")[1]).split(/[ _]/)[0];
+      const name = raw.charAt(0).toUpperCase() + raw.slice(1);
+      const first = name.toLowerCase();
+      const mine = cals.filter((c) => c.split(".")[1].startsWith(first));
+      mine.forEach((c) => used.add(c));
+      return { name, color: ED_PALETTE[i % ED_PALETTE.length], person: pid, calendars: mine };
+    });
+    const family = cals.find((c) => !used.has(c) && /family|home|house/.test(c));
+    const weather = ids.find((e) => e.startsWith("weather."));
+    const lists = ids.filter((e) => e.startsWith("todo.") && /shopping|home|grocer/.test(e)).slice(0, 2);
+    return {
+      ...(weather ? { weather_entity: weather } : {}),
+      people: people.length ? people : [{ name: "Me", color: ED_PALETTE[0], calendars: cals.slice(0, 1) }],
+      ...(family ? { shared: [{ name: "Family", color: ED_PALETTE[4], calendars: [family] }] } : {}),
+      ...(lists.length ? { lists } : {}),
+    };
   }
 }
 
 const SKYFAM_CSS = `
+:host([preview]) .app { height:640px; }
 :host { display:block; height:100%; --bg:#f6f3ee; --card:#fff; --ink:#2e2a26; --mute:#8b8378; --line:#ece6dc; --accent:#3d6b8a; --r:22px;
   font-family: "Nunito","Quicksand","Segoe UI Rounded","SF Pro Rounded",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 * { box-sizing:border-box; }
@@ -1144,9 +1195,339 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 }
 `;
 
+/* ---------- visual editor ---------- */
+const ED_PALETTE = ["#f6bf26", "#e67c73", "#4fc3f7", "#66bb6a", "#ab47bc", "#f48fb1", "#90a4ae", "#ff8a65", "#7986cb", "#4db6ac"];
+const edEnt = (domain, multiple) => ({ entity: { filter: { domain }, ...(multiple ? { multiple: true } : {}) } });
+const edSelect = (options) => ({ select: { mode: "dropdown", options } });
+const edNum = (min, max, unit) => ({ number: { min, max, mode: "box", ...(unit ? { unit_of_measurement: unit } : {}) } });
+
+const ED_LABELS = {
+  title: "Title", weather_entity: "Weather", default_view: "Start on", theme: "Default theme",
+  first_day: "Week starts on", idle_return_minutes: "Return to start view when idle",
+  name: "Name", initials: "Initials", calendars: "Calendars", add_calendar: "New events go to",
+  person: "Person (home / away dot)", chores: "Chore list", stars: "Star counter",
+  prefix_titles: "Title new events \"[Name] - Event\"", read_only: "Read only",
+  entity: "To-do list", rewards_list: "Rewards list", parent_pin: "Parent PIN",
+  planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
+  planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
+  height_offset: "Height offset",
+};
+const ED_HELP = {
+  idle_return_minutes: "0 turns this off",
+  add_calendar: "Leave blank to use the first calendar",
+  chores: "A Local To-do list. Each chore's description holds its time of day and stars, like \"morning 2⭐\"",
+  stars: "A counter helper that holds this person's star balance",
+  read_only: "Hidden from the New event picker",
+  rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",
+  parent_pin: "Asked before editing chores or rewards. Leave blank for no PIN",
+  planner_shared_name: "Defaults to the first shared calendar's name",
+  height_offset: "Leave blank to size automatically",
+  theme: "Each screen can still switch with the header button",
+};
+
+const ED_SCHEMA = {
+  general: [
+    { name: "title", selector: { text: {} } },
+    { name: "weather_entity", selector: edEnt("weather") },
+    { type: "grid", name: "", schema: [
+      { name: "default_view", selector: edSelect(NAV.map((n) => ({ value: n.id, label: n.label }))) },
+      { name: "theme", selector: edSelect(THEMES.map((t) => ({ value: t.id, label: `${t.icon} ${t.label}` }))) },
+      { name: "first_day", selector: edSelect([{ value: "0", label: "Sunday" }, { value: "1", label: "Monday" }]) },
+      { name: "idle_return_minutes", selector: edNum(0, 240, "min") },
+    ] },
+  ],
+  person: [
+    { type: "grid", name: "", schema: [{ name: "name", required: true, selector: { text: {} } }, { name: "initials", selector: { text: {} } }] },
+    { name: "calendars", selector: edEnt("calendar", true) },
+    { name: "add_calendar", selector: edEnt("calendar") },
+    { name: "person", selector: edEnt("person") },
+    { type: "grid", name: "", schema: [{ name: "chores", selector: edEnt("todo") }, { name: "stars", selector: edEnt("counter") }] },
+    { name: "prefix_titles", selector: { boolean: {} } },
+  ],
+  shared: [
+    { name: "name", required: true, selector: { text: {} } },
+    { name: "calendars", selector: edEnt("calendar", true) },
+    { name: "add_calendar", selector: edEnt("calendar") },
+    { name: "read_only", selector: { boolean: {} } },
+  ],
+  list: [
+    { type: "grid", name: "", schema: [{ name: "entity", required: true, selector: edEnt("todo") }, { name: "name", selector: { text: {} } }] },
+  ],
+  chores: [
+    { name: "rewards_list", selector: edEnt("todo") },
+    { name: "parent_pin", selector: { text: { type: "password" } } },
+  ],
+  planner: [
+    { type: "grid", name: "", schema: [
+      { name: "planner_start_hour", selector: edNum(0, 23) },
+      { name: "planner_end_hour", selector: edNum(1, 24) },
+      { name: "planner_hour_height", selector: edNum(32, 160, "px") },
+      { name: "planner_shared_name", selector: { text: {} } },
+    ] },
+  ],
+  advanced: [{ name: "height_offset", selector: edNum(0, 400, "px") }],
+};
+
+const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "people", "shared", "lists",
+  "rewards_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset"];
+const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "chores", "stars", "prefix_titles", "read_only", "entity"];
+
+const edClean = (o, order) => {
+  const out = {};
+  const keys = [...order.filter((k) => k in o), ...Object.keys(o).filter((k) => !order.includes(k))];
+  keys.forEach((k) => {
+    const v = o[k];
+    if (v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && !v.length && k !== "people")) return;
+    out[k] = v;
+  });
+  return out;
+};
+
+class SkyFamCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._open = new Set(["general", "people"]);
+    this._forms = [];
+  }
+
+  set hass(h) {
+    this._hass = h;
+    this._forms.forEach((f) => (f.el.hass = h));
+  }
+
+  setConfig(config) {
+    const c = JSON.parse(JSON.stringify(config || {}));
+    const item = (x) => {
+      const o = typeof x === "string" ? { entity: x } : { ...x };
+      if (o.entity && !o.calendars) { o.calendars = [o.entity]; delete o.entity; }
+      if (typeof o.calendars === "string") o.calendars = [o.calendars];
+      return o;
+    };
+    c.people = (c.people || []).map(item);
+    c.shared = (c.shared || []).map(item);
+    c.lists = (c.lists || []).map((l) => (typeof l === "string" ? { entity: l } : { ...l }));
+    this._config = c;
+    this._render();
+  }
+
+  connectedCallback() {
+    if (customElements.get("ha-form") && customElements.get("ha-entity-picker")) return;
+    // ha-form and the entity pickers are lazy loaded by the frontend; asking a built-in card for its editor loads them
+    (async () => {
+      try {
+        const helpers = await window.loadCardHelpers();
+        const c = await helpers.createCardElement({ type: "entities", entities: [] });
+        await c.constructor.getConfigElement();
+      } catch (e) { /* not inside Home Assistant */ }
+      this._sig = null;
+      this._render();
+    })();
+  }
+
+  _emit() {
+    const c = this._config;
+    const out = edClean({
+      ...c,
+      people: c.people.map((p) => edClean(p, ED_ITEM_ORDER)),
+      shared: c.shared.map((p) => edClean(p, ED_ITEM_ORDER)),
+      lists: c.lists.map((l) => edClean(l, ED_ITEM_ORDER)),
+    }, ED_ORDER);
+    if (!out.type) out.type = "custom:skyfam-card";
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: out }, bubbles: true, composed: true }));
+  }
+
+  _label(s) { return ED_LABELS[s.name] || s.name; }
+  _helper(s) { return ED_HELP[s.name]; }
+
+  _form(slot, schema, getData, onChange) {
+    const el = document.createElement("ha-form");
+    el.hass = this._hass;
+    el.schema = schema;
+    el.data = getData();
+    el.computeLabel = (s) => this._label(s);
+    el.computeHelper = (s) => this._helper(s);
+    el.addEventListener("value-changed", (ev) => { ev.stopPropagation(); onChange(ev.detail.value || {}); this._emit(); });
+    slot.appendChild(el);
+    this._forms.push({ el, getData });
+  }
+
+  _structSig() {
+    const c = this._config;
+    return [c.people.length, c.shared.length, c.lists.length].join("|");
+  }
+
+  _render() {
+    if (!this._config) return;
+    const sig = this._structSig();
+    if (sig === this._sig) { this._refresh(); return; }
+    this._sig = sig;
+    this._forms = [];
+    let c = this._config;
+    const section = (id, title, sub, inner) => `<details class="sec" data-sec="${id}" ${this._open.has(id) ? "open" : ""}>
+      <summary><span class="st">${title}</span><span class="ss">${sub}</span></summary><div class="sb">${inner}</div></details>`;
+    const itemRow = (group, i, total, label, color, badges) => `<details class="item" data-sec="${group}-${i}" ${this._open.has(`${group}-${i}`) ? "open" : ""}>
+      <summary>${color !== null ? `<input type="color" class="sw" data-color="${group}-${i}" value="${esc(color)}" title="Color">` : ""}
+        <span class="nm" data-name="${group}-${i}">${esc(label)}</span><span class="badges" data-badges="${group}-${i}">${badges}</span>
+        <span class="tools"><button data-move="${group}-${i}-up" ${i === 0 ? "disabled" : ""} title="Move up">▲</button><button data-move="${group}-${i}-down" ${i === total - 1 ? "disabled" : ""} title="Move down">▼</button><button class="del" data-del="${group}-${i}" title="Remove">✕</button></span>
+      </summary><div class="ib" data-slot="${group}-${i}"></div></details>`;
+    const items = (group, arr, addLabel) => arr.map((p, i) => itemRow(group, i, arr.length, this._itemLabel(group, p, i), group === "lists" ? null : p.color || ED_PALETTE[i % ED_PALETTE.length], this._badges(group, p))).join("")
+      + `<button class="add" data-add="${group}">＋ ${addLabel}</button>`;
+
+    this.shadowRoot.innerHTML = `<style>${SKYFAM_EDITOR_CSS}</style>
+      ${section("general", "General", "Title, weather, start view, theme", `<div data-slot="general"></div>`)}
+      ${section("people", "People", `${c.people.length} ${c.people.length === 1 ? "person" : "people"}, each with their own color and calendars`, items("people", c.people, "Add person"))}
+      ${section("shared", "Shared calendars", "Family, birthdays, trash day and other calendars that aren't one person's", items("shared", c.shared, "Add shared calendar"))}
+      ${section("lists", "Lists", "To-do lists for the Lists tab. The first one also shows on Today", items("lists", c.lists, "Add list"))}
+      ${section("chores", "Chores and rewards", "Chore lists and star counters are set per person above", `<div data-slot="chores"></div>`)}
+      ${section("planner", "Planner", "Hours shown in the Planner view", `<div data-slot="planner"></div>`)}
+      ${section("advanced", "Advanced", "Layout tweaks", `<div data-slot="advanced"></div>`)}`;
+    const root = this.shadowRoot;
+    const slot = (k) => root.querySelector(`[data-slot="${k}"]`);
+    const set = (val) => { Object.assign(this._config, val); };
+
+    this._form(slot("general"), ED_SCHEMA.general,
+      () => (c = this._config, { title: c.title, weather_entity: c.weather_entity, default_view: c.default_view || "today", theme: c.theme || "light", first_day: String(c.first_day ?? 0), idle_return_minutes: c.idle_return_minutes ?? 3 }),
+      (v) => {
+        set({ ...v, first_day: Number(v.first_day) || 0 });
+        if (this._config.default_view === "today") delete this._config.default_view;
+        if (this._config.theme === "light") delete this._config.theme;
+        if (!this._config.first_day) delete this._config.first_day;
+      });
+    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
+    this._form(slot("planner"), ED_SCHEMA.planner,
+      () => (c = this._config, { planner_start_hour: c.planner_start_hour ?? 6, planner_end_hour: c.planner_end_hour ?? 22, planner_hour_height: c.planner_hour_height ?? 64, planner_shared_name: c.planner_shared_name }),
+      (v) => {
+        set(v);
+        [["planner_start_hour", 6], ["planner_end_hour", 22], ["planner_hour_height", 64]].forEach(([k, d]) => { if (this._config[k] === d) delete this._config[k]; });
+      });
+    this._form(slot("advanced"), ED_SCHEMA.advanced, () => (c = this._config, { height_offset: c.height_offset }), set);
+
+    [["people", ED_SCHEMA.person], ["shared", ED_SCHEMA.shared], ["lists", ED_SCHEMA.list]].forEach(([group, schema]) => {
+      this._config[group].forEach((_, i) => {
+        const s = slot(`${group}-${i}`);
+        if (!s) return;
+        this._form(s, schema, () => this._config[group][i], (v) => {
+          this._config[group][i] = { ...this._config[group][i], ...v };
+          this._refreshHeader(group, i);
+        });
+      });
+    });
+
+    root.querySelectorAll("details").forEach((d) => d.addEventListener("toggle", () => {
+      d.open ? this._open.add(d.dataset.sec) : this._open.delete(d.dataset.sec);
+    }));
+    root.querySelectorAll("summary button, summary input").forEach((b) => b.addEventListener("click", (ev) => ev.stopPropagation()));
+    root.querySelectorAll("summary button").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); this._onTool(b); }));
+    root.querySelectorAll(".add").forEach((b) => b.addEventListener("click", () => this._onAdd(b.dataset.add)));
+    root.querySelectorAll("input.sw").forEach((inp) => inp.addEventListener("input", () => {
+      const [group, i] = inp.dataset.color.split("-");
+      this._config[group][Number(i)].color = inp.value;
+      this._emit();
+    }));
+  }
+
+  _itemLabel(group, p, i) {
+    if (group === "lists") return p.name || (this._hass && p.entity && this._hass.states[p.entity] && this._hass.states[p.entity].attributes.friendly_name) || p.entity || `List ${i + 1}`;
+    return p.name || `Untitled ${i + 1}`;
+  }
+  _badges(group, p) {
+    if (group === "lists") return "";
+    const b = [];
+    const n = (p.calendars || []).length;
+    b.push(n ? `📅 ${n}` : `<span class="warn">No calendar</span>`);
+    if (p.chores) b.push("⭐ chores");
+    if (p.read_only) b.push("🔒");
+    return b.map((x) => `<span class="badge">${x}</span>`).join("");
+  }
+  _refreshHeader(group, i) {
+    const p = this._config[group][i];
+    const nm = this.shadowRoot.querySelector(`[data-name="${group}-${i}"]`);
+    if (nm) nm.textContent = this._itemLabel(group, p, i);
+    const bd = this.shadowRoot.querySelector(`[data-badges="${group}-${i}"]`);
+    if (bd) bd.innerHTML = this._badges(group, p);
+  }
+  _refresh() {
+    this._forms.forEach((f) => { f.el.hass = this._hass; f.el.data = f.getData(); });
+    ["people", "shared", "lists"].forEach((g) => this._config[g].forEach((p, i) => {
+      this._refreshHeader(g, i);
+      const sw = this.shadowRoot.querySelector(`[data-color="${g}-${i}"]`);
+      if (sw && p.color && sw.value !== p.color) sw.value = p.color;
+    }));
+  }
+
+  _onTool(b) {
+    if (b.dataset.move) {
+      const [group, i, dir] = b.dataset.move.split("-");
+      const arr = this._config[group], a = Number(i), z = a + (dir === "up" ? -1 : 1);
+      if (z < 0 || z >= arr.length) return;
+      [arr[a], arr[z]] = [arr[z], arr[a]];
+      const oa = this._open.has(`${group}-${a}`), oz = this._open.has(`${group}-${z}`);
+      this._open.delete(`${group}-${a}`); this._open.delete(`${group}-${z}`);
+      if (oa) this._open.add(`${group}-${z}`); if (oz) this._open.add(`${group}-${a}`);
+    } else if (b.dataset.del) {
+      const [group, i] = b.dataset.del.split("-");
+      if (!b.classList.contains("sure")) {
+        b.classList.add("sure"); b.textContent = "Remove?";
+        setTimeout(() => { b.classList.remove("sure"); b.textContent = "✕"; }, 3000);
+        return;
+      }
+      this._config[group].splice(Number(i), 1);
+      [...this._open].filter((k) => k.startsWith(group + "-")).forEach((k) => this._open.delete(k));
+    }
+    this._sig = null;
+    this._render();
+    this._emit();
+  }
+
+  _onAdd(group) {
+    const arr = this._config[group];
+    const used = new Set([...this._config.people, ...this._config.shared].map((p) => p.color));
+    const color = ED_PALETTE.find((c) => !used.has(c)) || ED_PALETTE[arr.length % ED_PALETTE.length];
+    if (group === "people") arr.push({ name: `Person ${arr.length + 1}`, color, calendars: [] });
+    if (group === "shared") arr.push({ name: "Family", color, calendars: [] });
+    if (group === "lists") arr.push({ entity: "" });
+    this._open.add(group);
+    this._open.add(`${group}-${arr.length - 1}`);
+    this._sig = null;
+    this._render();
+    this._emit();
+  }
+}
+
+const SKYFAM_EDITOR_CSS = `
+:host { display:block; }
+details.sec { border:1px solid var(--divider-color, #e0e0e0); border-radius:12px; margin-bottom:12px; background:var(--card-background-color, #fff); }
+details.sec > summary { position:relative; cursor:pointer; padding:14px 40px 14px 16px; display:flex; flex-direction:column; gap:2px; list-style:none; }
+details.sec > summary::-webkit-details-marker, details.item > summary::-webkit-details-marker { display:none; }
+details.sec > summary::after { content:"▾"; position:absolute; right:16px; top:16px; color:var(--secondary-text-color); transition:transform .2s; }
+details.sec:not([open]) > summary::after { transform:rotate(-90deg); }
+.st { font-weight:600; font-size:16px; color:var(--primary-text-color); }
+.ss { font-size:13px; color:var(--secondary-text-color); }
+.sb { padding:0 16px 16px; }
+details.item { border:1px solid var(--divider-color, #e0e0e0); border-radius:10px; margin-bottom:8px; }
+details.item > summary { cursor:pointer; display:flex; align-items:center; gap:10px; padding:8px 10px; list-style:none; }
+details.item[open] > summary { border-bottom:1px solid var(--divider-color, #e0e0e0); }
+.ib { padding:12px; }
+.sw { width:30px; height:30px; padding:0; border:0; border-radius:50%; background:none; cursor:pointer; flex:none; }
+.sw::-webkit-color-swatch-wrapper { padding:0; } .sw::-webkit-color-swatch { border:0; border-radius:50%; } .sw::-moz-color-swatch { border:0; border-radius:50%; }
+.nm { font-weight:600; color:var(--primary-text-color); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.badges { display:flex; gap:4px; flex-wrap:wrap; }
+.badge { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--secondary-background-color, #f2f2f2); color:var(--secondary-text-color); white-space:nowrap; }
+.warn { color:var(--warning-color, #d68000); }
+.tools { display:flex; gap:2px; }
+.tools button { border:0; background:none; cursor:pointer; color:var(--secondary-text-color); font-size:13px; padding:6px 8px; border-radius:8px; font:inherit; }
+.tools button:hover:not(:disabled) { background:var(--secondary-background-color, #f2f2f2); }
+.tools button:disabled { opacity:.3; cursor:default; }
+.tools .del.sure { color:#fff; background:var(--error-color, #db4437); }
+.add { border:1px dashed var(--divider-color, #ccc); background:none; border-radius:10px; width:100%; padding:10px; cursor:pointer; color:var(--primary-color, #03a9f4); font:inherit; font-weight:600; }
+.add:hover { background:var(--secondary-background-color, #f5f5f5); }
+`;
+
+if (!customElements.get("skyfam-card-editor")) customElements.define("skyfam-card-editor", SkyFamCardEditor);
 if (!customElements.get("skyfam-card")) {
   customElements.define("skyfam-card", SkyFamCard);
   window.customCards = window.customCards || [];
-  window.customCards.push({ type: "skyfam-card", name: "SkyFam family hub", description: "Skylight-style calendar, chores and lists" });
+  window.customCards.push({ type: "skyfam-card", name: "SkyFam family hub", preview: false, description: "Skylight-style calendar, chores, planner and lists", documentationURL: "https://github.com/muddro1/skyfam-card" });
   console.info(`%c SKYFAM %c ${SKYFAM_VERSION} `, "background:#3d6b8a;color:#fff;font-weight:700", "background:#f6f3ee;color:#3d6b8a");
 }

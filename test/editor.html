@@ -1,0 +1,115 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html,body{margin:0;height:100%;font-family:Roboto,sans-serif;background:#fafafa}
+#split{display:grid;grid-template-columns:440px 1fr;gap:16px;padding:16px;height:100vh;box-sizing:border-box}
+#ed{overflow:auto} #wrap{overflow:auto}
+.sf{display:flex;flex-direction:column;gap:2px;margin:6px 0;font-size:13px;color:#555} .sf input,.sf select{padding:6px;font-size:14px;border:1px solid #ccc;border-radius:4px}
+.sf input[type=checkbox]{align-self:flex-start} .sf small{color:#999}</style></head>
+<body><div id="split"><div id="ed"></div><div id="wrap"></div></div>
+<script type="module">
+import "../dist/skyfam-card.js";
+// --- stand-in for Home Assistant's lazy-loaded ha-form: renders inputs from the schema, fires value-changed
+class StubForm extends HTMLElement {
+  set data(v) { this._data = v || {}; this._paint(); } get data() { return this._data; }
+  set schema(v) { this._schema = v; this._paint(); } get schema() { return this._schema; }
+  _paint() {
+    if (!this._schema || !this._data) return;
+    const flat = []; const walk = (s) => s.forEach((x) => x.type === "grid" ? walk(x.schema) : flat.push(x)); walk(this._schema);
+    if (this._painted) { flat.forEach((f) => { const el = this.querySelector(`[name="${f.name}"]`); if (!el || el === document.activeElement) return; const v = this._data[f.name];
+      if (el.type === "checkbox") el.checked = !!v; else el.value = Array.isArray(v) ? v.join(",") : (v ?? ""); }); return; }
+    this._painted = true;
+    this.innerHTML = flat.map((f) => { const s = f.selector, k = Object.keys(s)[0], v = this._data[f.name], lab = this.computeLabel ? this.computeLabel(f) : f.name;
+      const help = this.computeHelper && this.computeHelper(f);
+      let inp;
+      if (k === "boolean") inp = `<input type="checkbox" name="${f.name}" ${v ? "checked" : ""}>`;
+      else if (k === "select") inp = `<select name="${f.name}">${s.select.options.map((o) => `<option value="${o.value}" ${String(v) === String(o.value) ? "selected" : ""}>${o.label}</option>`).join("")}</select>`;
+      else inp = `<input name="${f.name}" data-k="${k}" ${s.entity && s.entity.multiple ? "data-multi=1" : ""} ${k === "number" ? 'type="number"' : ""} value="${Array.isArray(v) ? v.join(",") : (v ?? "")}" placeholder="${k === "entity" ? s.entity.filter.domain + ".*" : ""}">`;
+      return `<label class="sf"><span>${lab}</span>${inp}${help ? `<small>${help}</small>` : ""}</label>`; }).join("");
+    this.querySelectorAll("[name]").forEach((el) => el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", () => {
+      let v = el.type === "checkbox" ? el.checked : el.value;
+      if (el.dataset.multi) v = v ? v.split(",").map((x) => x.trim()).filter(Boolean) : [];
+      else if (el.dataset.k === "number") v = v === "" ? undefined : Number(v);
+      this.dispatchEvent(new CustomEvent("value-changed", { detail: { value: { ...this._data, [el.name]: v } }, bubbles: true, composed: true }));
+    }));
+  }
+}
+customElements.define("ha-form", StubForm); customElements.define("ha-entity-picker", class extends HTMLElement {});
+
+const today = new Date(); today.setHours(0,0,0,0);
+const iso = (d, h, m=0) => { const x = new Date(d); x.setHours(h, m, 0, 0); return x.toISOString(); };
+const dstr = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const add = (n) => new Date(today.getTime() + n*86400000);
+const EV = {
+  "calendar.jordan": [0,1,2,3,7,8,9].map((n) => ({ uid:"k"+n, summary:"Office", start:{date:dstr(add(n))}, end:{date:dstr(add(n+1))} })),
+  "calendar.leo": [{uid:"n1", summary:"[Leo] - Gymnastics", start:{dateTime:iso(today,16,15)}, end:{dateTime:iso(today,17)}, location:"Riverside Gym"}, {uid:"n2", summary:"[Leo] - Gymnastics", start:{dateTime:iso(add(7),16,15)}, end:{dateTime:iso(add(7),17)}}],
+  "calendar.mia": [{uid:"e1", summary:"[Mia] - Tutoring", start:{dateTime:iso(add(1),16,30)}, end:{dateTime:iso(add(1),17,30)}, location:"Learning Center"},
+    {uid:"e2", summary:"[Mia] - Soccer Practice", start:{dateTime:iso(add(1),18)}, end:{dateTime:iso(add(1),19,30)}}, {uid:"e3", summary:"[Mia] - Chess Club", start:{dateTime:iso(add(4),15)}, end:{dateTime:iso(add(4),16)}},
+    {uid:"e4", summary:"[Mia] - Wear Green", start:{date:dstr(add(2))}, end:{date:dstr(add(3))}}],
+  "calendar.alex": [{uid:"z1", summary:"HOA meeting", start:{dateTime:iso(add(2),19)}, end:{dateTime:iso(add(2),20,30)}, description:"Bring the budget handout"}, {uid:"z0", summary:"Morning standup", start:{dateTime:iso(today,8)}, end:{dateTime:iso(today,8,30)}}],
+  "calendar.family": [{uid:"f1", summary:"House cleaners", start:{dateTime:iso(add(2),9)}, end:{dateTime:iso(add(2),12)}}, {uid:"f2", summary:"Kids sleepover", start:{date:dstr(add(5))}, end:{date:dstr(add(7))}}],
+  "calendar.birthdays": [{uid:"b1", summary:"Grandpa's birthday", start:{date:dstr(add(3))}, end:{date:dstr(add(4))}}],
+  "calendar.recycle_coach": [{uid:"r1", summary:"Garbage & Recycling", start:{date:dstr(add(3))}, end:{date:dstr(add(4))}}],
+};
+const todos = {
+  "todo.home": [{uid:"h1", summary:"Buy small garbage bags", status:"needs_action", due: dstr(add(1))}, {uid:"h2", summary:"Strip the beds", status:"needs_action", due:dstr(add(2))}, {uid:"h3", summary:"Change HVAC filter", status:"needs_action"}, {uid:"h4", summary:"Return library books", status:"completed"}],
+  "todo.alex": [{uid:"i1", summary:"Call the plumber", status:"needs_action", due:"2026-10-04"}, {uid:"i2", summary:"Renew car registration", status:"needs_action"}],
+  "todo.mia_chores": [
+    {uid:"c1", summary:"🛏️ Make your bed", description:"morning 1⭐", status:"completed"}, {uid:"c2", summary:"👕 Get dressed", description:"morning", status:"completed"},
+    {uid:"c3", summary:"🪥 Brush teeth", description:"morning", status:"needs_action"}, {uid:"c4", summary:"🍽️ Clear your plate", description:"evening 1⭐", status:"needs_action"},
+    {uid:"c5", summary:"🧺 Clothes in the hamper", description:"evening 1⭐", status:"needs_action"}, {uid:"c6", summary:"🥄 Unload silverware", description:"afternoon 2⭐", status:"needs_action"}],
+  "todo.skyfam_rewards": [{uid:"r1", summary:"📱 15 min screen time", description:"5⭐", status:"needs_action"}, {uid:"r2", summary:"🎬 Pick the family movie", description:"10⭐", status:"needs_action"}, {uid:"r3", summary:"🍦 Ice cream treat", description:"15⭐", status:"needs_action"}],
+  "todo.leo_chores": [
+    {uid:"d1", summary:"🛏️ Make your bed", description:"morning 1⭐", status:"needs_action"}, {uid:"d2", summary:"🪥 Brush teeth", description:"morning", status:"needs_action"},
+    {uid:"d3", summary:"🧸 Pick up toys", description:"evening 2⭐", status:"needs_action"}, {uid:"d4", summary:"🌙 Pajamas on", description:"evening", status:"needs_action"}],
+};
+const subs = {};
+const states = {
+  "weather.forecast_home": { state:"rainy", attributes:{ temperature:71 } },
+  "person.alex": { state:"home", attributes:{} }, "person.jordan": { state:"not_home", attributes:{} },
+  "counter.mia_stars": { state:"12", attributes:{} }, "counter.leo_stars": { state:"4", attributes:{} },
+};
+const card = document.createElement("skyfam-card");
+let hass;
+const mkHass = () => ({
+  states: { ...states },
+  callApi: async (m, path) => { const cal = path.split("?")[0].split("/")[1]; await new Promise(r=>setTimeout(r,50)); return EV[cal] || []; },
+  callService: async (d, s, data, target) => {
+    console.log("SERVICE", d, s, JSON.stringify(data), JSON.stringify(target));
+    const e = target.entity_id;
+    if (d === "counter") { states[e] = { state:String(data.value), attributes:{} }; card.hass = hass = mkHass(); }
+    const push = () => subs[e] && subs[e]({items: todos[e].map(x=>({...x}))});
+    if (d === "todo" && s === "update_item") { const it = todos[e].find(i=>i.uid===data.item); if (data.status) it.status = data.status; if (data.rename) it.summary = data.rename; if (data.description !== undefined) it.description = data.description; push(); }
+    if (d === "todo" && s === "add_item") { todos[e].push({uid:"n"+Math.random(), summary:data.item, description:data.description, status:"needs_action"}); push(); }
+    if (d === "todo" && s === "remove_item") { todos[e] = todos[e].filter(i=>i.uid!==data.item); push(); }
+  },
+  connection: { subscribeMessage: async (cb, msg) => {
+    if (msg.type === "todo/item/subscribe") { subs[msg.entity_id] = cb; setTimeout(()=>cb({items: (todos[msg.entity_id]||[]).map(x=>({...x}))}), 30); }
+    if (msg.type === "weather/subscribe_forecast") setTimeout(()=>cb({forecast:[0,1,2,3,4,5,6,7].map(n=>({datetime:add(n).toISOString(), condition:["rainy","partlycloudy","sunny","sunny","cloudy","rainy","sunny","sunny"][n], temperature:74+n, templow:62+n}))}), 30);
+    return () => {};
+  } },
+});
+const cfg = window.SKYFAM_CONFIG || {
+  title: "The Parkers", height_offset: 0, weather_entity: "weather.forecast_home", idle_return_minutes: 0, default_view: new URLSearchParams(location.search).get("view") || "today",
+  people: [
+    { name:"Alex", color:"#e8a33d", calendars:["calendar.alex"], person:"person.alex" },
+    { name:"Jordan", color:"#e06c5f", calendars:["calendar.jordan"], person:"person.jordan" },
+    { name:"Mia", color:"#4aa8d8", calendars:["calendar.mia"], chores:"todo.mia_chores", stars:"counter.mia_stars", prefix_titles:true },
+    { name:"Leo", color:"#5cb85c", calendars:["calendar.leo"], chores:"todo.leo_chores", stars:"counter.leo_stars", prefix_titles:true },
+  ],
+  shared: [ { name:"Family", color:"#9b6fc4", entity:"calendar.family" }, { name:"Birthdays", color:"#e88fb4", entity:"calendar.birthdays", read_only:true }, { name:"Trash", color:"#8fa3ad", entity:"calendar.recycle_coach", read_only:true } ],
+  lists: [ { entity:"todo.home", name:"Home" }, { entity:"todo.alex", name:"Alex's To-Do" } ],
+  rewards_list: "todo.skyfam_rewards", parent_pin: new URLSearchParams(location.search).get("pin") || undefined,
+  rewards: [ {name:"15 min screen time", cost:5, icon:"📱"}, {name:"Pick the movie", cost:10, icon:"🎬"}, {name:"Pick dinner", cost:10, icon:"🍕"}, {name:"Ice cream", cost:15, icon:"🍦"} ],
+};
+card.preview = true;
+card.setConfig(cfg);
+document.getElementById("wrap").appendChild(card);
+card.hass = hass = mkHass();
+const SkyFam = customElements.get("skyfam-card");
+const ed = SkyFam.getConfigElement();
+window.__configs = [];
+ed.addEventListener("config-changed", (e) => { window.__configs.push(e.detail.config); card.setConfig(e.detail.config); ed.setConfig(e.detail.config); });
+ed.hass = hass; ed.setConfig({ type: "custom:skyfam-card", ...cfg });
+document.getElementById("ed").appendChild(ed);
+window.card = card; window.ed = ed; window.stub = SkyFam.getStubConfig(hass);
+</script></body></html>
