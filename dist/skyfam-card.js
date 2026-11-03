@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.5.0";
+const SKYFAM_VERSION = "0.6.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -554,10 +554,13 @@ class SkyFamCard extends HTMLElement {
         ${next.map((i) => `<button class="chore-row" data-act="chore" data-p="${esc(p.name)}" data-uid="${esc(i.uid)}"><span class="chk"></span>${esc(i.summary)}</button>`).join("") || `<div class="empty small">All done! 🎉</div>`}
       </div>`;
     }).join("");
-    const list = this._lists[0];
+    // lists marked "today: true" stack in the third column; without any, the first list shows
+    const flagged = this._lists.filter((l) => l.today);
+    const todayLists = flagged.length ? flagged : this._lists.slice(0, 1);
+    const limit = todayLists.length > 1 ? Number(this._config.today_list_items) || 5 : 0;
     return `<div class="col sched card"><h2>Schedule</h2>${sched}</div>
       <div class="col card"><h2 data-act="view" data-v="chores" class="link">Chores ›</h2>${chores || `<div class="empty small">No chore lists set up</div>`}</div>
-      <div class="col card">${list ? this._listPanel(list, true) : ""}</div>`;
+      <div class="col lists-col">${todayLists.map((l) => `<div class="card ${limit ? "stacked" : ""}">${this._listPanel(l, true, limit)}</div>`).join("")}</div>`;
   }
 
   _ring(done, total, p) {
@@ -735,7 +738,7 @@ class SkyFamCard extends HTMLElement {
     }).join("")}${this._owedPanel()}</div>`;
   }
 
-  _listPanel(l, compact) {
+  _listPanel(l, compact, limit = 0) {
     const items = this._todos[l.entity];
     const name = l.name || (this._hass.states[l.entity] && this._hass.states[l.entity].attributes.friendly_name) || l.entity;
     if (!items) return `<h2>${esc(name)}</h2><div class="empty small">Loading…</div>`;
@@ -745,7 +748,8 @@ class SkyFamCard extends HTMLElement {
       <span class="chk">${i.status === "completed" ? "✓" : ""}</span><span class="tt">${esc(i.summary)}${i.due ? `<small>${esc(this._fmtDue(i.due))}</small>` : ""}</span></button>`;
     return `${compact ? `<h2 class="link" data-act="view" data-v="lists">${esc(name)} ›</h2>` : `<h2>${esc(name)} <span class="cnt">${open.length}</span></h2>`}
       <input class="add" data-add="${esc(l.entity)}" data-keep="add-${esc(l.entity)}" placeholder="Add to ${esc(name)}…" enterkeyhint="done">
-      <div class="todos">${open.map(row).join("") || `<div class="empty small">All clear ✨</div>`}
+      <div class="todos">${(limit ? open.slice(0, limit) : open).map(row).join("") || `<div class="empty small">All clear ✨</div>`}
+      ${limit && open.length > limit ? `<button class="showdone" data-act="view" data-v="lists">+ ${open.length - limit} more ›</button>` : ""}
       ${!compact && done.length ? `<button class="showdone" data-act="showdone" data-e="${esc(l.entity)}">${this._showDone.has(l.entity) ? "Hide" : "Show"} completed (${done.length})</button>${this._showDone.has(l.entity) ? done.map(row).join("") : ""}` : ""}</div>`;
   }
   _fmtDue(due) {
@@ -1170,6 +1174,9 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .showdone { color:var(--accent); font-weight:800; padding:12px 4px; }
 .cnt { background:var(--line); border-radius:999px; padding:0 10px; font-size:15px; vertical-align:middle; }
 .v-today .todos { max-height:60vh; overflow:auto; }
+.lists-col { display:flex; flex-direction:column; gap:18px; }
+.v-today .stacked .todos { max-height:none; overflow:visible; }
+.stacked h2 { font-size:19px; margin-bottom:8px; } .stacked .add { padding:9px 12px; font-size:15px; } .stacked .todo { padding:8px 4px; }
 
 /* modal, fab, toast */
 .fab { position:absolute; right:28px; bottom:28px; width:66px; height:66px; border-radius:50%; background:var(--accent); color:#fff; font-size:34px; font-weight:400; text-align:center; box-shadow:0 6px 18px rgba(0,0,0,.2); z-index:3; }
@@ -1289,19 +1296,21 @@ const ED_LABELS = {
   name: "Name", initials: "Initials", calendars: "Calendars", add_calendar: "New events go to",
   person: "Person (photo and home / away dot)", picture: "Picture URL", hide_pictures: "Use initials instead of photos", chores: "Chore list", stars: "Star counter",
   prefix_titles: "Title new events \"[Name] - Event\"", read_only: "Read only",
-  entity: "To-do list", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", parent_pin: "Parent PIN",
+  entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", parent_pin: "Parent PIN",
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
   height_offset: "Height offset",
 };
 const ED_HELP = {
   idle_return_minutes: "0 turns this off",
+  today: "Turn on for each list you want on the Today screen. They stack in order. With none on, the first list shows",
   picture: "Optional. Leave blank to use the person's photo from Home Assistant. Files in /config/www are /local/name.jpg",
   add_calendar: "Leave blank to use the first calendar",
   chores: "A Local To-do list. Each chore's description holds its time of day and stars, like \"morning 2⭐\"",
   stars: "A counter helper that holds this person's star balance",
   read_only: "Hidden from the New event picker",
   rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",
+  today_list_items: "When more than one list shows on Today, each shows this many items, then a \"+ more\" link",
   rewards_owed_list: "A Local To-do list. Each redeemed reward is added here until a parent marks it given",
   parent_pin: "Asked before editing chores or rewards. Leave blank for no PIN",
   planner_shared_name: "Defaults to the first shared calendar's name",
@@ -1338,6 +1347,7 @@ const ED_SCHEMA = {
   ],
   list: [
     { type: "grid", name: "", schema: [{ name: "entity", required: true, selector: edEnt("todo") }, { name: "name", selector: { text: {} } }] },
+    { name: "today", selector: { boolean: {} } },
   ],
   chores: [
     { name: "rewards_list", selector: edEnt("todo") },
@@ -1356,8 +1366,8 @@ const ED_SCHEMA = {
 };
 
 const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "people", "shared", "lists",
-  "rewards_list", "rewards_owed_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset"];
-const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity"];
+  "rewards_list", "rewards_owed_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
+const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity", "today"];
 
 const edClean = (o, order) => {
   const out = {};
@@ -1465,7 +1475,7 @@ class SkyFamCardEditor extends HTMLElement {
       ${section("general", "General", "Title, weather, start view, theme", `<div data-slot="general"></div>`)}
       ${section("people", "People", `${c.people.length} ${c.people.length === 1 ? "person" : "people"}, each with their own color and calendars`, items("people", c.people, "Add person"))}
       ${section("shared", "Shared calendars", "Family, birthdays, trash day and other calendars that aren't one person's", items("shared", c.shared, "Add shared calendar"))}
-      ${section("lists", "Lists", "To-do lists for the Lists tab. The first one also shows on Today", items("lists", c.lists, "Add list"))}
+      ${section("lists", "Lists", "To-do lists for the Lists tab. Turn on \"Show on Today\" for the ones to stack on the Today screen", items("lists", c.lists, "Add list") + `<div data-slot="listopts"></div>`)}
       ${section("chores", "Chores and rewards", "Chore lists and star counters are set per person above", `<div data-slot="chores"></div>`)}
       ${section("planner", "Planner", "Hours shown in the Planner view", `<div data-slot="planner"></div>`)}
       ${section("advanced", "Advanced", "Layout tweaks", `<div data-slot="advanced"></div>`)}`;
@@ -1488,6 +1498,9 @@ class SkyFamCardEditor extends HTMLElement {
         set(v);
         [["planner_start_hour", 6], ["planner_end_hour", 22], ["planner_hour_height", 64]].forEach(([k, d]) => { if (this._config[k] === d) delete this._config[k]; });
       });
+    this._form(slot("listopts"), [{ name: "today_list_items", selector: edNum(1, 20) }],
+      () => (c = this._config, { today_list_items: c.today_list_items ?? 5 }),
+      (v) => { set(v); if (this._config.today_list_items === 5) delete this._config.today_list_items; });
     this._form(slot("advanced"), ED_SCHEMA.advanced, () => (c = this._config, { height_offset: c.height_offset }), set);
 
     [["people", ED_SCHEMA.person], ["shared", ED_SCHEMA.shared], ["lists", ED_SCHEMA.list]].forEach(([group, schema]) => {
@@ -1519,7 +1532,7 @@ class SkyFamCardEditor extends HTMLElement {
     return p.name || `Untitled ${i + 1}`;
   }
   _badges(group, p) {
-    if (group === "lists") return "";
+    if (group === "lists") return p.today ? `<span class="badge">📌 Today</span>` : "";
     const b = [];
     const n = (p.calendars || []).length;
     b.push(n ? `📅 ${n}` : `<span class="warn">No calendar</span>`);

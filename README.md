@@ -119,8 +119,10 @@ shared:
 lists:
   - entity: todo.home
     name: Home
+    today: true             # stack on the Today screen
   - entity: todo.shopping_list
     name: Groceries
+    today: true
 rewards_list: todo.skyfam_rewards
 rewards_owed_list: todo.skyfam_rewards_owed
 ```
@@ -131,7 +133,8 @@ rewards_owed_list: todo.skyfam_rewards_owed
 |---|---|---|
 | `people` | required | Family members. Each takes `name`, `color`, `calendars`, and optionally `person` (photo and home/away dot), `picture` (image URL, overrides the person's photo), `chores`, `stars`, `prefix_titles`, `initials`, `add_calendar` (which calendar new events go to; defaults to the first). |
 | `shared` | `[]` | Shared calendars, as `entity`, `name`, `color`, `read_only`. |
-| `lists` | `[]` | To-do lists, as `entity` and `name`. The first one also shows on Today. |
+| `lists` | `[]` | To-do lists, as `entity`, `name` and `today`. Lists with `today: true` stack on the Today screen in order; with none set, the first list shows there. |
+| `today_list_items` | `5` | When more than one list is on Today, items shown per list before a "+ N more" link. |
 | `rewards_list` | none | A to-do list holding the rewards. Without it, `rewards:` from the config is used and can't be edited from the card. |
 | `rewards_owed_list` | none | A to-do list where redeemed rewards wait until a parent marks them given. Each item's description reads "Mia · 10⭐ · redeemed Nov 3". |
 | `hide_pictures` | `false` | Show initials instead of photos. |
@@ -178,6 +181,7 @@ node shoot.js shots-phone 390 844     # phone size
 node edit-test.js shots-edit          # clicks through adding/editing chores and rewards
 node editor-test.js shots-editor      # drives the visual editor and checks the YAML it saves
 node owed-test.js shots-owed          # photos, redeeming a reward, marking it given, refunding
+node today-lists-test.js shots-tl     # several lists stacked on Today
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).
