@@ -1,0 +1,33 @@
+# Reopens every completed chore each night so the chore board starts fresh.
+# Stars already earned stay in the counters.
+# Paste into Settings > Automations > Create automation > Edit in YAML,
+# and list your own chore chart entities under for_each.
+alias: "Chore charts: reset overnight"
+description: Reopens completed chores on the kids' chore charts each night.
+mode: single
+triggers:
+  - trigger: time
+    at: "00:05:00"
+actions:
+  - repeat:
+      for_each:
+        - todo.mia_chore_chart
+        - todo.leo_chore_chart
+      sequence:
+        - variables:
+            chart: "{{ repeat.item }}"
+        - action: todo.get_items
+          target:
+            entity_id: "{{ chart }}"
+          data:
+            status: completed
+          response_variable: done
+        - repeat:
+            for_each: "{{ done[chart]['items'] | map(attribute='uid') | list }}"
+            sequence:
+              - action: todo.update_item
+                target:
+                  entity_id: "{{ chart }}"
+                data:
+                  item: "{{ repeat.item }}"
+                  status: needs_action
