@@ -5,7 +5,7 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   const b = await chromium.launch(); const pg = await b.newPage({ viewport: { width: 1280, height: 800 } });
   const logs = []; pg.on("console", (m) => logs.push(m.text())); pg.on("pageerror", (e) => logs.push("PAGEERROR " + e.message));
   const c = () => pg.locator("skyfam-card"); const shot = async (n) => { await pg.waitForTimeout(300); await pg.screenshot({ path: `${out}/${n}.png` }); };
-  const ok = (cond, msg) => console.log((cond ? "PASS " : "FAIL ") + msg);
+  const ok = (cond, msg) => { console.log((cond ? "PASS " : "FAIL ") + msg); if (!cond) process.exitCode = 1; };
   await pg.goto("http://localhost:8769/test/harness.html?view=today"); await pg.waitForTimeout(600);
   await shot("0-today");
   ok((await c().locator(".kid-mini", { hasText: "Mia" }).textContent()).includes("🎁 1 owed"), "Today shows Mia's owed count");

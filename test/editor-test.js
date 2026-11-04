@@ -7,7 +7,7 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   const ed = () => pg.locator("skyfam-card-editor"); const card = () => pg.locator("skyfam-card");
   const last = () => pg.evaluate(() => window.__configs[window.__configs.length - 1]);
   const shot = async (n) => { await pg.waitForTimeout(250); await pg.screenshot({ path: `${out}/${n}.png` }); };
-  const ok = (cond, msg) => console.log((cond ? "PASS " : "FAIL ") + msg);
+  const ok = (cond, msg) => { console.log((cond ? "PASS " : "FAIL ") + msg); if (!cond) process.exitCode = 1; };
   await pg.goto("http://localhost:8768/test/editor.html"); await pg.waitForTimeout(600);
   await shot("1-editor");
 

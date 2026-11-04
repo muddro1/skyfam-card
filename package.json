@@ -1,0 +1,12 @@
+{
+  "name": "skyfam-card",
+  "private": true,
+  "description": "Skylight-style family hub card for Home Assistant. The card itself is dist/skyfam-card.js; this file only sets up the tests.",
+  "scripts": {
+    "test": "cd test && node edit-test.js shots-edit && node editor-test.js shots-editor && node owed-test.js shots-owed && node today-lists-test.js shots-tl && node days-stars-test.js shots-ds && node stars-adjust-test.js shots-sa",
+    "shots": "cd test && node shoot.js shots 1280 800"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}

@@ -57,7 +57,7 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 ### Manual
 
 1. Copy `dist/skyfam-card.js` to `/config/www/skyfam-card.js`.
-2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.3.0` as a **JavaScript module**. Bump the `?v=` when you update the file.
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.8.0` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
 
 ## Setup
 
@@ -174,7 +174,16 @@ The card is one file with no build step: `dist/skyfam-card.js`.
 
 `test/harness.html` renders the card. `test/editor.html` shows the visual editor beside a live preview, with a small stand-in for Home Assistant's `ha-form`.
 
-The harness renders the card with a mock `hass` object and sample data. To take screenshots with Playwright:
+The harness renders the card with a mock `hass` object and sample data. The tests drive it with Playwright:
+
+```sh
+npm install
+npx playwright install chromium   # first time only
+npm test                          # runs every test below; exits non-zero on a failure
+npm run shots                     # screenshots of every view into test/shots
+```
+
+To run one test or take other screenshots, run it from `test/`:
 
 ```sh
 cd test

@@ -4,7 +4,7 @@ const root = path.resolve(__dirname, ".."); const out = process.argv[2] || "shot
 const srv = http.createServer((q, r) => { const p = path.join(root, decodeURIComponent(q.url.split("?")[0])); r.writeHead(200, { "Content-Type": (p.endsWith(".js") ? "text/javascript" : p.endsWith(".svg") ? "image/svg+xml" : "text/html") + "; charset=utf-8" }); fs.createReadStream(p).pipe(r); }).listen(8770, async () => {
   const b = await chromium.launch(); const pg = await b.newPage({ viewport: { width: 1280, height: 800 } });
   const logs = []; pg.on("console", (m) => logs.push(m.text())); pg.on("pageerror", (e) => logs.push("PAGEERROR " + e.message));
-  const ok = (cond, msg) => console.log((cond ? "PASS " : "FAIL ") + msg);
+  const ok = (cond, msg) => { console.log((cond ? "PASS " : "FAIL ") + msg); if (!cond) process.exitCode = 1; };
   const c = () => pg.locator("skyfam-card");
   await pg.goto("http://localhost:8770/test/harness.html?view=today"); await pg.waitForTimeout(600);
   ok((await c().locator(".lists-col .card").count()) === 1, "default: only the first list on Today");
