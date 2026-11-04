@@ -22,6 +22,7 @@ class StubForm extends HTMLElement {
       const help = this.computeHelper && this.computeHelper(f);
       let inp;
       if (k === "boolean") inp = `<input type="checkbox" name="${f.name}" ${v ? "checked" : ""}>`;
+      else if (k === "select" && s.select.multiple) inp = `<input name="${f.name}" data-multi=1 value="${(v || []).join(",")}">`;
       else if (k === "select") inp = `<select name="${f.name}">${s.select.options.map((o) => `<option value="${o.value}" ${String(v) === String(o.value) ? "selected" : ""}>${o.label}</option>`).join("")}</select>`;
       else inp = `<input name="${f.name}" data-k="${k}" ${s.entity && s.entity.multiple ? "data-multi=1" : ""} ${k === "number" ? 'type="number"' : ""} value="${Array.isArray(v) ? v.join(",") : (v ?? "")}" placeholder="${k === "entity" ? s.entity.filter.domain + ".*" : ""}">`;
       return `<label class="sf"><span>${lab}</span>${inp}${help ? `<small>${help}</small>` : ""}</label>`; }).join("");

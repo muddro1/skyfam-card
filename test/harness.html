@@ -31,7 +31,8 @@ const todos = {
   "todo.leo_chores": [
     {uid:"d1", summary:"🛏️ Make your bed", description:"morning 1⭐", status:"needs_action"}, {uid:"d2", summary:"🪥 Brush teeth", description:"morning", status:"needs_action"},
     {uid:"d3", summary:"🧸 Pick up toys", description:"evening 2⭐", status:"needs_action"}, {uid:"d4", summary:"🌙 Pajamas on", description:"evening", status:"needs_action"},
-    {uid:"d5", summary:"🗑️ Trash out", description:"evening 3⭐ " + ["sun","mon","tue","wed","thu","fri","sat"].filter((_, i) => i !== new Date().getDay()).slice(0, 2).join(","), status:"needs_action"}],
+    {uid:"d5", summary:"🗑️ Trash out", description:"evening 3⭐ " + ["sun","mon","tue","wed","thu","fri","sat"].filter((_, i) => i !== new Date().getDay()).slice(0, 2).join(","), status:"needs_action"},
+    {uid:"d6", summary:"💌 Card for Grandma", description:"anytime 2⭐ " + dstr(add(-1)), status:"completed"}],
 };
 const subs = {};
 const states = {
@@ -55,7 +56,8 @@ const mkHass = () => ({
   },
   connection: { subscribeMessage: async (cb, msg) => {
     if (msg.type === "todo/item/subscribe") { subs[msg.entity_id] = cb; setTimeout(()=>cb({items: (todos[msg.entity_id]||[]).map(x=>({...x}))}), 30); }
-    if (msg.type === "weather/subscribe_forecast") setTimeout(()=>cb({forecast:[0,1,2,3,4,5,6,7].map(n=>({datetime:add(n).toISOString(), condition:["rainy","partlycloudy","sunny","sunny","cloudy","rainy","sunny","sunny"][n], temperature:74+n, templow:62+n}))}), 30);
+    if (msg.type === "weather/subscribe_forecast" && msg.forecast_type === "hourly") setTimeout(()=>cb({forecast:[...Array(48)].map((_,h)=>({datetime:new Date(today.getTime()+h*3600000).toISOString(), condition:"sunny", temperature:50+h}))}), 30);
+    else if (msg.type === "weather/subscribe_forecast") setTimeout(()=>cb({forecast:[0,1,2,3,4,5,6,7].map(n=>({datetime:add(n).toISOString(), condition:["rainy","partlycloudy","sunny","sunny","cloudy","rainy","sunny","sunny"][n], temperature:74+n, templow:62+n}))}), 30);
     return () => {};
   } },
 });

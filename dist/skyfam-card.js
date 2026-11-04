@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.8.0";
+const SKYFAM_VERSION = "0.9.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -52,6 +52,9 @@ const parseDays = (text) => {
   return set.size && set.size < 7 ? [...set].sort() : null;
 };
 const dayLabel = (days) => days.map((d) => DAYS[d][0].toUpperCase() + DAYS[d].slice(1)).join(", ");
+// One-off chores carry dates ("2026-11-04") in the description and show only on those dates.
+const parseDates = (text) => String(text || "").match(/\d{4}-\d{2}-\d{2}/g);
+const dateLabel = (dates) => dates.map((d) => parseLocalDate(d).toLocaleDateString([], { month: "short", day: "numeric" })).join(", ");
 
 class SkyFamCard extends HTMLElement {
   constructor() {
@@ -99,13 +102,14 @@ class SkyFamCard extends HTMLElement {
     this._lists = (config.lists || []).map((l) => (typeof l === "string" ? { entity: l } : l));
     this._calOwners = {};
     [...this._people, ...this._shared].forEach((o) => o.calendars.forEach((c) => (this._calOwners[c] = o)));
-    if (config.default_view && config.default_view !== this._prevDefault) this._view = config.default_view;
-    this._prevDefault = config.default_view;
+    const home = this._home();
+    if (home !== this._prevDefault) this._view = home;
+    this._prevDefault = home;
     this._scrollNow = this._view === "planner";
     // live reconfigure (the visual editor calls setConfig on every change)
     const calSig = JSON.stringify(Object.keys(this._calOwners).sort());
     if (calSig !== this._calSig) { this._events = {}; this._calSig = calSig; }
-    const subSig = JSON.stringify([this._todoEntities(), this._config.weather_entity || ""]);
+    const subSig = JSON.stringify([this._todoEntities(), this._config.weather_entity || "", !!this._config.event_weather]);
     if (this._subSig && subSig !== this._subSig) this._teardown();
     this._subSig = subSig;
     this._sig = "";
@@ -197,6 +201,7 @@ class SkyFamCard extends HTMLElement {
     const conn = this._hass.connection;
     this._todos = {};
     this._forecast = [];
+    this._hourly = [];
     this._todoEntities().forEach((entity) => {
       const u = conn.subscribeMessage((msg) => { this._todos[entity] = msg.items || []; this._render(); },
         { type: "todo/item/subscribe", entity_id: entity }).catch((e) => console.warn("skyfam todo", entity, e));
@@ -206,7 +211,21 @@ class SkyFamCard extends HTMLElement {
       const u = conn.subscribeMessage((msg) => { this._forecast = msg.forecast || []; this._render(); },
         { type: "weather/subscribe_forecast", forecast_type: "daily", entity_id: this._config.weather_entity }).catch(() => {});
       this._unsubs.push(u);
+      if (this._config.event_weather) {
+        const h = conn.subscribeMessage((msg) => { this._hourly = msg.forecast || []; this._render(); },
+          { type: "weather/subscribe_forecast", forecast_type: "hourly", entity_id: this._config.weather_entity }).catch(() => {});
+        this._unsubs.push(h);
+      }
     }
+  }
+
+  // Forecast for an event: the hourly entry nearest its start (within 90 min), else that day's forecast.
+  _evWeather(ev) {
+    if (!this._config.event_weather) return null;
+    const t = ev.start.getTime();
+    let best = null;
+    if (!ev.allDay) (this._hourly || []).forEach((f) => { const d = Math.abs(new Date(f.datetime) - t); if (d <= 5400000 && (!best || d < best.d)) best = { d, f }; });
+    return best ? best.f : this._forecast.find((f) => sameDay(new Date(f.datetime), ev.start)) || null;
   }
 
   _range() {
@@ -298,7 +317,10 @@ class SkyFamCard extends HTMLElement {
     let period = pm ? pm[0] : "anytime";
     if (period === "night") period = "evening";
     const days = parseDays(item.description);
-    return { ...item, stars, period, days, today: !days || days.includes(new Date().getDay()), done: item.status === "completed" };
+    const dates = parseDates(item.description);
+    const now = new Date();
+    const today = dates ? dates.includes(ymd(now)) : !days || days.includes(now.getDay());
+    return { ...item, stars, period, days, dates, today, done: item.status === "completed" };
   }
 
   // A kid's chores, only today's unless all is true.
@@ -428,7 +450,8 @@ class SkyFamCard extends HTMLElement {
     const name = f.name.trim();
     if (!name) { this._toast("Give the chore a name"); return false; }
     const summary = (f.emoji.trim() ? f.emoji.trim() + " " : "") + name;
-    const days = f.days && f.days.length && f.days.length < 7 ? f.days.map((d) => DAYS[d]).join(",") : "";
+    // A date makes it a one-off, so chosen days are dropped.
+    const days = f.date ? f.date : f.days && f.days.length && f.days.length < 7 ? f.days.map((d) => DAYS[d]).join(",") : "";
     const description = f.period + (f.stars > 0 ? ` ${f.stars}⭐` : "") + (days ? ` ${days}` : "");
     if (f.uid) {
       const p = this._people.find((x) => x.name === f.person);
@@ -484,8 +507,8 @@ class SkyFamCard extends HTMLElement {
     const t = this.shadowRoot.querySelector(".clock");
     if (t) t.innerHTML = this._timeStr(new Date());
     const idle = (Number(this._config.idle_return_minutes) || 0) * 60000;
-    if (idle && Date.now() - this._lastTouch > idle && (this._view !== (this._config.default_view || "today") || this._modal)) {
-      this._view = this._config.default_view || "today";
+    if (idle && Date.now() - this._lastTouch > idle && (this._view !== this._home() || this._modal)) {
+      this._view = this._home();
       this._anchor = startOfDay(new Date());
       this._modal = null;
       this._scrollNow = this._view === "planner";
@@ -495,6 +518,18 @@ class SkyFamCard extends HTMLElement {
     if (this._dayKey !== ymd(new Date())) { this._dayKey = ymd(new Date()); this._events = {}; this._render(); }
   }
 
+  // Tabs in the order of config tabs (unlisted ones hidden); all of NAV when tabs isn't set.
+  _tabs() {
+    const ids = Array.isArray(this._config.tabs) ? this._config.tabs : [];
+    const tabs = ids.map((id) => NAV.find((n) => n.id === id)).filter(Boolean);
+    return tabs.length ? tabs : NAV;
+  }
+  // The start view, or the first tab when the start view's tab is hidden.
+  _home() {
+    const tabs = this._tabs();
+    const v = this._config.default_view || "today";
+    return tabs.some((n) => n.id === v) ? v : tabs[0].id;
+  }
   _timeStr(d) { return esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })).replace(/\s?([AP]M)/i, "<small>$1</small>"); }
 
   _render() {
@@ -506,7 +541,7 @@ class SkyFamCard extends HTMLElement {
     const body = root.querySelector(".body");
     const scroll = body ? body.scrollTop : 0;
 
-    root.querySelector(".rail").innerHTML = NAV.map((n) =>
+    root.querySelector(".rail").innerHTML = this._tabs().map((n) =>
       `<button class="nav ${this._view === n.id ? "on" : ""}" data-act="view" data-v="${n.id}">${this._icon(n)}<span>${n.label}</span></button>`).join("");
     root.querySelector(".top").innerHTML = this._renderTop();
     let html = "";
@@ -560,17 +595,19 @@ class SkyFamCard extends HTMLElement {
     const now = new Date();
     const vis = this._visible(events);
     const dayBlock = (day, label) => {
-      const list = this._onDay(vis, day);
+      const all = this._onDay(vis, day);
+      const list = this._config.today_past_events === "hide" ? all.filter((ev) => ev.allDay || ev.end >= now) : all;
       const rows = list.length ? list.map((ev) => {
+        const wx = this._evWeather(ev);
         const past = !ev.allDay && ev.end < now;
         const nowOn = !ev.allDay && ev.start <= now && ev.end > now;
         return `<button class="agenda ${past ? "past" : ""} ${nowOn ? "now" : ""}" style="--c:${ev.color}" data-act="event" data-id="${esc(this._evId(ev))}">
           <span class="a-time">${ev.allDay ? "All day" : `${this._fmtTime(ev.start)}<small>${this._fmtTime(ev.end)}</small>`}</span>
           <span class="a-bar"></span>
-          <span class="a-main"><span class="a-title">${esc(ev.title)}</span>${ev.location ? `<span class="a-loc">📍 ${esc(ev.location.split(",")[0])}</span>` : ""}</span>
+          <span class="a-main"><span class="a-title">${esc(ev.title)}</span>${ev.location || wx ? `<span class="a-loc">${wx ? `<span class="a-wx">${WEATHER_ICON[wx.condition] || "🌡️"} ${Math.round(wx.temperature)}°</span>` : ""}${ev.location ? `📍 ${esc(ev.location.split(",")[0])}` : ""}</span>` : ""}</span>
           ${ev.owner ? `<span class="a-who" style="--c:${ev.color}">${esc(ev.owner.name)}</span>` : ""}
         </button>`;
-      }).join("") : `<div class="empty small">Nothing planned</div>`;
+      }).join("") : `<div class="empty small">${all.length ? "Nothing left today" : "Nothing planned"}</div>`;
       return `<div class="day-block"><h3>${label}</h3>${rows}</div>`;
     };
     const sched = events === null ? `<div class="empty">Loading calendar…</div>` :
@@ -759,7 +796,7 @@ class SkyFamCard extends HTMLElement {
         if (!g.length) return "";
         return `<div class="per"><h4>${per.icon} ${per.label}</h4>${g.map((i) => `
           <button class="chore ${i.done ? "done" : ""} ${i.today ? "" : "offday"}" data-act="${ed ? "chore-open" : "chore"}" data-p="${esc(p.name)}" data-uid="${esc(i.uid)}">
-            <span class="chk">${i.done ? "✓" : ""}</span><span class="ct">${esc(i.summary)}</span>${ed && i.days ? `<span class="cd">${dayLabel(i.days)}</span>` : ""}${i.stars ? `<span class="cs">${i.stars}⭐</span>` : ""}${ed ? `<span class="pen">✏️</span>` : ""}</button>`).join("")}</div>`;
+            <span class="chk">${i.done ? "✓" : ""}</span><span class="ct">${esc(i.summary)}</span>${ed && (i.dates || i.days) ? `<span class="cd">${i.dates ? dateLabel(i.dates) : dayLabel(i.days)}</span>` : ""}${i.stars ? `<span class="cs">${i.stars}⭐</span>` : ""}${ed ? `<span class="pen">✏️</span>` : ""}</button>`).join("")}</div>`;
       }).join("");
       const stars = p.stars && this._hass.states[p.stars];
       return `<div class="kid card" style="--c:${p.color}">
@@ -865,6 +902,8 @@ class SkyFamCard extends HTMLElement {
         <div class="who">${PERIODS.map((per) => `<label class="whochip" style="--c:var(--accent)"><input type="radio" name="period" value="${per.id}" ${m.period === per.id ? "checked" : ""}><span>${per.icon} ${per.label}</span></label>`).join("")}</div>
         <div class="lbl">Days <small>(none picked = every day)</small></div>
         <div class="who">${[0, 1, 2, 3, 4, 5, 6].map((i) => (i + (Number(this._config.first_day) || 0)) % 7).map((d) => `<label class="whochip" style="--c:var(--accent)"><input type="checkbox" name="day" value="${d}" ${(m.days || []).includes(d) ? "checked" : ""}><span>${dayLabel([d])}</span></label>`).join("")}</div>
+        <div class="lbl">Or only on <small>(one-off)</small></div>
+        <div class="row"><input class="in" type="date" name="date" value="${esc(m.date || "")}"><button class="btn" data-act="date-today">Today</button></div>
         <div class="lbl">Stars earned</div>
         <div class="who">${[0, 1, 2, 3, 4, 5].map((n) => `<label class="whochip" style="--c:#d9a400"><input type="radio" name="stars" value="${n}" ${Number(m.stars) === n ? "checked" : ""}><span>${n ? n + " ⭐" : "None"}</span></label>`).join("")}</div>
         <div class="row end">${m.uid ? `<button class="btn danger" data-act="chore-del">Delete</button><span class="grow"></span>` : ""}<button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="chore-save">Save</button></div>`;
@@ -1001,14 +1040,14 @@ class SkyFamCard extends HTMLElement {
         if (!raw) break;
         const c = this._parseChore(raw);
         const [emoji, name] = splitEmoji(raw.summary);
-        this._openModal({ type: "chore-form", uid: raw.uid, person: p.name, emoji, name, period: c.period, stars: c.stars, days: c.days || [], kids: [p.name] });
+        this._openModal({ type: "chore-form", uid: raw.uid, person: p.name, emoji, name, period: c.period, stars: c.stars, days: c.days || [], date: (c.dates || [])[0] || "", kids: [p.name] });
         break;
       }
       case "chore-save": {
         const mod = this.shadowRoot.querySelector(".modal");
         const val = (n) => { const x = mod.querySelector(`[name="${n}"]:checked`) || mod.querySelector(`[name="${n}"]`); return x ? x.value : ""; };
         const f = { uid: this._modal.uid, person: this._modal.person, emoji: val("emoji"), name: val("name"), period: val("period") || "anytime",
-          stars: Number(val("stars")) || 0, days: [...mod.querySelectorAll('[name="day"]:checked')].map((x) => Number(x.value)), kids: [...mod.querySelectorAll('[name="kid"]:checked')].map((x) => x.value) };
+          stars: Number(val("stars")) || 0, date: val("date"), days: [...mod.querySelectorAll('[name="day"]:checked')].map((x) => Number(x.value)), kids: [...mod.querySelectorAll('[name="kid"]:checked')].map((x) => x.value) };
         el.disabled = true;
         this._saveChore(f).then((ok) => { if (ok) { this._closeModal(); this._toast(f.uid ? "Chore updated ✓" : "Chore added ✓"); } else el.disabled = false; }).catch(() => (el.disabled = false));
         break;
@@ -1022,6 +1061,7 @@ class SkyFamCard extends HTMLElement {
         } });
         break;
       }
+      case "date-today": { const i = this.shadowRoot.querySelector('.modal [name="date"]'); if (i) i.value = ymd(new Date()); break; }
       case "emoji-pick": { const i = this.shadowRoot.querySelector('.modal [name="emoji"]'); if (i) i.value = el.dataset.e; break; }
       case "step": { const i = this.shadowRoot.querySelector('.modal [name="cost"]'); if (i) i.value = Math.max(1, (Number(i.value) || 0) + Number(el.dataset.d)); break; }
       case "stars-adjust": { const n = el.dataset.p; this._gate(() => this._openModal({ type: "stars", person: n, live: true })); break; }
@@ -1164,7 +1204,7 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .a-time { font-weight:800; font-size:15px; display:flex; flex-direction:column; } .a-time small { color:var(--mute); font-weight:700; }
 .a-bar { width:6px; align-self:stretch; border-radius:6px; background:var(--c); }
 .a-main { display:flex; flex-direction:column; min-width:0; } .a-title { font-weight:800; font-size:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.a-loc { color:var(--mute); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.a-wx { margin-right:8px; } .a-loc { color:var(--mute); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .a-who { background:color-mix(in srgb, var(--c) 25%, var(--card)); padding:4px 10px; border-radius:999px; font-size:13px; font-weight:800; }
 .kid-mini { padding:12px; border-radius:18px; background:color-mix(in srgb, var(--c) 10%, var(--card)); margin-bottom:12px; }
 .km-head { display:flex; align-items:center; gap:12px; margin-bottom:6px; } .km-head b { font-size:18px; display:block; } .km-head span { color:var(--mute); font-weight:700; font-size:14px; }
@@ -1354,14 +1394,14 @@ const ED_LABELS = {
   entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", parent_pin: "Parent PIN",
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
-  height_offset: "Height offset",
+  height_offset: "Height offset", tabs: "Tabs", today_past_events: "Past events on Today", event_weather: "Show the forecast on Today's events",
 };
 const ED_HELP = {
   idle_return_minutes: "0 turns this off",
   today: "Turn on for each list you want on the Today screen. They stack in order. With none on, the first list shows",
   picture: "Optional. Leave blank to use the person's photo from Home Assistant. Files in /config/www are /local/name.jpg",
   add_calendar: "Leave blank to use the first calendar",
-  chores: "A Local To-do list. Each chore's description holds its time of day, stars and optional days, like \"morning 2⭐ mon,thu\"",
+  chores: "A Local To-do list. Each chore's description holds its time of day, stars and optional days or a date, like \"morning 2⭐ mon,thu\" or \"anytime 1⭐ 2026-11-04\"",
   stars: "A counter helper that holds this person's star balance",
   read_only: "Hidden from the New event picker",
   rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",
@@ -1371,6 +1411,8 @@ const ED_HELP = {
   planner_shared_name: "Defaults to the first shared calendar's name",
   height_offset: "Leave blank to size automatically",
   theme: "Each screen can still switch with the header button",
+  tabs: "Drag to reorder. Untick a tab to hide it",
+  event_weather: "Uses the weather entity's hourly forecast, or the daily one when there's no hourly",
 };
 
 const ED_SCHEMA = {
@@ -1384,6 +1426,11 @@ const ED_SCHEMA = {
       { name: "idle_return_minutes", selector: edNum(0, 240, "min") },
     ] },
     { name: "hide_pictures", selector: { boolean: {} } },
+    { name: "tabs", selector: { select: { multiple: true, reorder: true, options: NAV.map((n) => ({ value: n.id, label: n.label })) } } },
+    { type: "grid", name: "", schema: [
+      { name: "today_past_events", selector: edSelect([{ value: "dim", label: "Greyed out" }, { value: "hide", label: "Hidden" }]) },
+      { name: "event_weather", selector: { boolean: {} } },
+    ] },
   ],
   person: [
     { type: "grid", name: "", schema: [{ name: "name", required: true, selector: { text: {} } }, { name: "initials", selector: { text: {} } }] },
@@ -1420,7 +1467,7 @@ const ED_SCHEMA = {
   advanced: [{ name: "height_offset", selector: edNum(0, 400, "px") }],
 };
 
-const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "people", "shared", "lists",
+const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "people", "shared", "lists",
   "rewards_list", "rewards_owed_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
 const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity", "today"];
 
@@ -1539,12 +1586,15 @@ class SkyFamCardEditor extends HTMLElement {
     const set = (val) => { Object.assign(this._config, val); };
 
     this._form(slot("general"), ED_SCHEMA.general,
-      () => (c = this._config, { title: c.title, weather_entity: c.weather_entity, default_view: c.default_view || "today", theme: c.theme || "light", first_day: String(c.first_day ?? 0), idle_return_minutes: c.idle_return_minutes ?? 3, hide_pictures: !!c.hide_pictures }),
+      () => (c = this._config, { title: c.title, weather_entity: c.weather_entity, default_view: c.default_view || "today", theme: c.theme || "light", first_day: String(c.first_day ?? 0), idle_return_minutes: c.idle_return_minutes ?? 3, hide_pictures: !!c.hide_pictures,
+        tabs: c.tabs && c.tabs.length ? c.tabs : NAV.map((n) => n.id), today_past_events: c.today_past_events || "dim", event_weather: !!c.event_weather }),
       (v) => {
         set({ ...v, first_day: Number(v.first_day) || 0 });
         if (this._config.default_view === "today") delete this._config.default_view;
         if (this._config.theme === "light") delete this._config.theme;
         if (!this._config.first_day) delete this._config.first_day;
+        if (this._config.today_past_events === "dim") delete this._config.today_past_events;
+        if (!this._config.tabs || !this._config.tabs.length || this._config.tabs.join() === NAV.map((n) => n.id).join()) delete this._config.tabs;
       });
     this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
     this._form(slot("planner"), ED_SCHEMA.planner,

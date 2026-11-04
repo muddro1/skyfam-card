@@ -20,6 +20,21 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   assert.equal(await c().locator(".chore:not(.offday):has-text('Trash out')").count(), 1, "chore shows after adding today");
   const desc = logs.filter(l => l.startsWith("SERVICE todo update_item")).pop();
   assert.match(desc, /evening 3⭐ (sun|mon|tue|wed|thu|fri|sat)(,(sun|mon|tue|wed|thu|fri|sat)){2}"/, desc);
+  // one-off chores: yesterday's is hidden, and shown dimmed with its date in edit mode
+  assert.equal(await c().locator(".chore:has-text('Card for Grandma')").count(), 0, "past one-off hidden");
+  await c().locator("[data-act=chore-edit]").click(); await pg.waitForTimeout(200);
+  assert.equal(await c().locator(".chore.offday:has-text('Card for Grandma') .cd").count(), 1, "past one-off dimmed with date in edit mode");
+  await c().locator("[data-act=chore-edit]").click(); await pg.waitForTimeout(200);
+  // add a one-off for today with the Today button; days picked are dropped
+  await c().locator("[data-act=chore-add]").first().click();
+  await c().locator('.modal [name=name]').fill("Water the plants");
+  await c().locator(`.modal label:has(input[name=day][value="${(today + 1) % 7}"]) span`).click();
+  await c().locator("[data-act=date-today]").click(); await shot("4-form-oneoff");
+  await c().locator("[data-act=chore-save]").click(); await pg.waitForTimeout(200);
+  const ymdToday = await pg.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; });
+  const add = logs.filter(l => l.startsWith("SERVICE todo add_item")).pop();
+  assert.ok(add.includes(`anytime 1⭐ ${ymdToday}"`), add);
+  assert.ok(await c().locator(".chore:has-text('Water the plants')").count() >= 1, "today's one-off shows"); await shot("5-oneoff-today");
   // ticking a 3-star chore sends three increments, no set_value
   logs.length = 0;
   await c().locator(".chore:has-text('Trash out')").click(); await pg.waitForTimeout(300);

@@ -18,7 +18,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 
 ## Views
 
-- **Today**: schedule for today and the next two days, each kid's chore progress, and your first list.
+- **Today**: schedule for today and the next two days, each kid's chore progress, and your first list. Events that have ended are greyed out, or hidden with `today_past_events: hide`. With `event_weather: true` each event shows the forecast for its time.
 - **Planner**: today as an hourly timeline with a column for each person (plus one for shared calendars), an all-day row, and a red line at the current time. Tap an empty slot to add an event for that person at that hour. Opens scrolled to now.
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card.
@@ -57,21 +57,21 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 ### Manual
 
 1. Copy `dist/skyfam-card.js` to `/config/www/skyfam-card.js`.
-2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.8.0` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.9.0` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
 
 ## Setup
 
 1. **Chore lists**: Settings → Devices & services → Add integration → **Local To-do**. Create one list per kid (for example "Mia's Chore Chart").
 2. **Stars**: Settings → Devices & services → Helpers → Create helper → **Counter**, one per kid, minimum 0.
 3. **Rewards** (optional): one more Local To-do list, for example "SkyFam Rewards", and a second one, for example "SkyFam Rewards Owed", to track redeemed rewards until they're given.
-4. **Nightly reset**: add the automation in [`examples/reset-chores-automation.yaml`](examples/reset-chores-automation.yaml) so chores reopen every night. Earned stars stay.
+4. **Nightly reset**: add the automation in [`examples/reset-chores-automation.yaml`](examples/reset-chores-automation.yaml) so chores reopen every night and past one-off chores are deleted. Earned stars stay.
 5. Add a dashboard with a single **Panel** view, then add the **SkyFam family hub** card from the card picker. It starts pre-filled with the people, calendars and weather Home Assistant already has.
 
 ### Visual editor
 
 Everything below can be set from the card's **Edit** screen instead of YAML:
 
-- **General**: title, weather, which view to start on, default theme, first day of the week, idle timeout.
+- **General**: title, weather, which view to start on, default theme, first day of the week, idle timeout, tab order (drag to reorder, untick to hide), past events and event weather on Today.
 - **People**: one row per person with a color picker, calendars, the calendar new events go to, home/away person, chore list, star counter and the "[Name] - Event" title option. Reorder with the arrows; the remove button asks once before deleting.
 - **Shared calendars**: family, birthdays, trash day and so on, with a read-only switch.
 - **Lists**, **Chores and rewards** (rewards list, parent PIN), **Planner** hours and **Advanced** layout.
@@ -141,6 +141,9 @@ rewards_owed_list: todo.skyfam_rewards_owed
 | `rewards` | `[]` | Static rewards, as `name`, `cost`, `icon`. Only used when `rewards_list` is not set. |
 | `weather_entity` | none | Current temperature, today's high/low, and a forecast in each week column. |
 | `title` | none | Shown next to the clock on wide screens. |
+| `tabs` | all, in the default order | Tabs to show, in order, e.g. `[today, chores, week, month, planner, lists]`. Tabs left out are hidden. If the start view's tab is hidden, the card starts on the first tab. |
+| `today_past_events` | `dim` | `dim` greys out today's events once they end; `hide` removes them. |
+| `event_weather` | `false` | Show the forecast (icon and temperature) on each event on Today. Uses the weather entity's hourly forecast near the event's start, or the day's forecast for all-day events and when there's no hourly one. |
 | `default_view` | `today` | `today`, `planner`, `week`, `month`, `chores` or `lists`. |
 | `planner_start_hour` | `6` | First hour shown in Planner. |
 | `planner_end_hour` | `22` | Last hour shown in Planner. |
@@ -159,8 +162,9 @@ Chores are plain to-do items, so they can also be added from the HA to-do screen
 - a time of day: `morning`, `afternoon`, `evening` (or `night`), or `anytime` (the default)
 - a star value written as `2⭐`
 - optional days: `mon,thu`, `weekdays`, `weekends` or full names like `saturday`. On other days the chore is hidden (edit mode still shows it, dimmed). No days means every day.
+- or a date, like `2026-11-04`, for a one-off chore. It shows only on that date (several dates work too) and the nightly reset deletes it once every date has passed. In the chore form, pick the date or tap **Today**.
 
-So `🛏️ Make your bed` with the description `morning 1⭐` shows under Morning and is worth 1 star. `🗑️ Trash out` with `evening 3⭐ tue,fri` shows only on Tuesdays and Fridays.
+So `🛏️ Make your bed` with the description `morning 1⭐` shows under Morning and is worth 1 star. `🗑️ Trash out` with `evening 3⭐ tue,fri` shows only on Tuesdays and Fridays. `💌 Card for Grandma` with `anytime 2⭐ 2026-11-04` shows on November 4 only.
 
 Stars are added and taken with `counter.increment` / `counter.decrement`, one step per star, so two screens changing stars at once can't overwrite each other. Leave the counter's step at 1. A leading emoji in the name is shown as the chore's icon.
 
@@ -194,8 +198,9 @@ node edit-test.js shots-edit          # clicks through adding/editing chores and
 node editor-test.js shots-editor      # drives the visual editor and checks the YAML it saves
 node owed-test.js shots-owed          # photos, redeeming a reward, marking it given, refunding
 node today-lists-test.js shots-tl     # several lists stacked on Today
-node days-stars-test.js shots-ds      # day-based chores, star changes via counter increment/decrement
+node days-stars-test.js shots-ds      # day-based and one-off chores, star changes via counter increment/decrement
 node stars-adjust-test.js shots-sa    # parent star adjuster: PIN, +1/-1, set an exact total
+node today-options-test.js shots-to   # hiding past events, event weather, tab order
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).

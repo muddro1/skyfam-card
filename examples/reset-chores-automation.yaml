@@ -1,9 +1,10 @@
-# Reopens every completed chore each night so the chore board starts fresh.
+# Reopens every completed chore each night so the chore board starts fresh,
+# and deletes one-off chores whose date (like 2026-11-04) has passed.
 # Stars already earned stay in the counters.
 # Paste into Settings > Automations > Create automation > Edit in YAML,
 # and list your own chore chart entities under for_each.
 alias: "Chore charts: reset overnight"
-description: Reopens completed chores on the kids' chore charts each night.
+description: Reopens completed chores and removes past one-off chores on the kids' chore charts each night.
 mode: single
 triggers:
   - trigger: time
@@ -20,10 +21,30 @@ actions:
           target:
             entity_id: "{{ chart }}"
           data:
-            status: completed
-          response_variable: done
+            status: [needs_action, completed]
+          response_variable: all
+        - variables:
+            today: "{{ now().date() | string }}"
+            # One-off chores: every date in the description is before today.
+            old: >-
+              {% set ns = namespace(uids=[]) %}
+              {% for i in all[chart]['items'] %}
+                {% set d = (i.description or '') | regex_findall('\d{4}-\d{2}-\d{2}') %}
+                {% if d and d | max < today %}{% set ns.uids = ns.uids + [i.uid] %}{% endif %}
+              {% endfor %}
+              {{ ns.uids }}
+            reopen: >-
+              {{ all[chart]['items'] | selectattr('status', 'eq', 'completed')
+                 | map(attribute='uid') | reject('in', old) | list }}
+        - if: "{{ old | count > 0 }}"
+          then:
+            - action: todo.remove_item
+              target:
+                entity_id: "{{ chart }}"
+              data:
+                item: "{{ old }}"
         - repeat:
-            for_each: "{{ done[chart]['items'] | map(attribute='uid') | list }}"
+            for_each: "{{ reopen }}"
             sequence:
               - action: todo.update_item
                 target:

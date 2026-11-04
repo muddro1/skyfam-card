@@ -41,6 +41,16 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   await ed().locator('[data-slot="general"] select[name=first_day]').selectOption("1");
   c = await last(); ok(c.first_day === 1, "first day Monday is numeric 1");
 
+  await ed().locator('[data-slot="general"] input[name=tabs]').fill("chores,today,week");
+  c = await last(); ok(c.tabs.join() === "chores,today,week", "tabs order -> config");
+  ok((await card().locator(".rail .nav > span:last-child").allInnerTexts()).join() === "Chores,Today,Week", "preview rail reordered");
+  await ed().locator('[data-slot="general"] input[name=tabs]').fill("today,planner,week,month,chores,lists");
+  c = await last(); ok(!("tabs" in c), "default tab order is dropped from YAML");
+  await ed().locator('[data-slot="general"] select[name=today_past_events]').selectOption("hide");
+  c = await last(); ok(c.today_past_events === "hide", "past events hide -> config");
+  await ed().locator('[data-slot="general"] input[name=event_weather]').check();
+  c = await last(); ok(c.event_weather === true, "event weather -> config");
+
   await ed().locator('details[data-sec="planner"] > summary').click();
   await ed().locator('[data-slot="planner"] input[name=planner_start_hour]').fill("8");
   c = await last(); ok(c.planner_start_hour === 8, "planner start hour");
