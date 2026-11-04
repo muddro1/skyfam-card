@@ -2,6 +2,12 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.8.0: Parent star adjuster
+Commit `ee24083`
+
+- **⭐ Adjust stars** on a kid's rewards screen lets a parent take or add a star, or set an exact total. It sits behind the parent PIN when one is set.
+- −1 and ＋1 use `counter.decrement` / `counter.increment`, so they're safe with several screens open. Set to replaces the total.
+
 ## v0.7.0: Chores on chosen days
 Commit `891d0e5`
 
