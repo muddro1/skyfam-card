@@ -2,6 +2,15 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.9.0: One-off chores, Today options, tab order
+Commit `1c2de42`
+
+- A chore can be for one date only: pick it in the chore form (or tap **Today**), or write a date like `2026-11-04` in the description. It shows only on that date; edit mode shows it dimmed with its date on other days.
+- Today: `today_past_events: hide` removes events once they end, instead of greying them out.
+- Today: `event_weather: true` shows the forecast on each event, from the hourly forecast near its start (daily for all-day events).
+- `tabs` sets the order of the tabs and hides any left out. The editor has a drag-to-reorder list for it.
+- The example nightly reset automation now also deletes one-off chores once their date has passed. Re-paste it from `examples/reset-chores-automation.yaml` to get this.
+
 ## v0.8.0: Parent star adjuster
 Commit `ee24083`
 
