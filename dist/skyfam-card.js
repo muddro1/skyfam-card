@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.7.0";
+const SKYFAM_VERSION = "0.8.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -844,7 +844,7 @@ class SkyFamCard extends HTMLElement {
           ${waiting.length ? `<p class="waiting">Waiting on: ${waiting.map((o) => `${esc(o.icon)} ${esc(o.name)}`).join(", ")}</p>` : ""}
           <div class="rewards">${rw.map((r, i) => `<button class="reward ${bal < r.cost ? "locked" : ""}" data-act="redeem" data-p="${esc(m.person || "")}" data-i="${i}">
             <span class="ri">${esc(r.icon || "🎁")}</span><span class="rn">${esc(r.name)}</span><span class="rc">${r.cost} ⭐</span></button>`).join("") || `<div class="empty small">No rewards set up yet</div>`}</div>
-          <div class="row end">${canEdit ? `<button class="btn" data-act="rewards-edit">✏️ Edit rewards</button>` : ""}<button class="btn primary" data-act="close">Done</button></div>`;
+          <div class="row end">${p && p.stars ? `<button class="btn" data-act="stars-adjust" data-p="${esc(p.name)}">⭐ Adjust stars</button>` : ""}${canEdit ? `<button class="btn" data-act="rewards-edit">✏️ Edit rewards</button>` : ""}<button class="btn primary" data-act="close">Done</button></div>`;
       }
     } else if (m.type === "reward-form") {
       inner = `<h2>${m.uid ? "Edit reward" : "New reward"}</h2>
@@ -868,6 +868,14 @@ class SkyFamCard extends HTMLElement {
         <div class="lbl">Stars earned</div>
         <div class="who">${[0, 1, 2, 3, 4, 5].map((n) => `<label class="whochip" style="--c:#d9a400"><input type="radio" name="stars" value="${n}" ${Number(m.stars) === n ? "checked" : ""}><span>${n ? n + " ⭐" : "None"}</span></label>`).join("")}</div>
         <div class="row end">${m.uid ? `<button class="btn danger" data-act="chore-del">Delete</button><span class="grow"></span>` : ""}<button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="chore-save">Save</button></div>`;
+    } else if (m.type === "stars") {
+      const p = this._people.find((x) => x.name === m.person);
+      const st = p && this._hass.states[p.stars];
+      inner = `<h2>Adjust ${esc(m.person)}'s stars</h2><p class="m-when">⭐ ${st ? esc(st.state) : "?"} stars now</p>
+        <div class="row"><button class="btn step" data-act="star-adj" data-d="-1">−1</button><button class="btn step" data-act="star-adj" data-d="1">＋1</button></div>
+        <div class="lbl">Set to</div>
+        <div class="row"><input class="in cost" type="number" min="0" name="stars-to" data-keep="stars-to" placeholder="${st ? esc(st.state) : ""}"><span class="star-lbl">⭐ stars</span><button class="btn primary" data-act="star-set">Set</button></div>
+        <div class="row end"><button class="btn" data-act="close">Done</button></div>`;
     } else if (m.type === "pin") {
       inner = `<h2>Parent PIN</h2><div class="pin-dots">${"•".repeat(m.entered.length) || "&nbsp;"}</div>
         <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9, "", 0, "⌫"].map((d) => d === "" ? "<span></span>" : `<button data-act="pin" data-d="${d}">${d}</button>`).join("")}</div>
@@ -1016,6 +1024,18 @@ class SkyFamCard extends HTMLElement {
       }
       case "emoji-pick": { const i = this.shadowRoot.querySelector('.modal [name="emoji"]'); if (i) i.value = el.dataset.e; break; }
       case "step": { const i = this.shadowRoot.querySelector('.modal [name="cost"]'); if (i) i.value = Math.max(1, (Number(i.value) || 0) + Number(el.dataset.d)); break; }
+      case "stars-adjust": { const n = el.dataset.p; this._gate(() => this._openModal({ type: "stars", person: n, live: true })); break; }
+      case "star-adj": case "star-set": {
+        const p = this._people.find((x) => x.name === (this._modal || {}).person);
+        if (!p || !p.stars) break;
+        if (a === "star-adj") { this._addStars(p.stars, Number(el.dataset.d)).catch(() => {}); break; }
+        const i = this.shadowRoot.querySelector('.modal [name="stars-to"]');
+        const v = Number(i && i.value);
+        if (!i || i.value === "" || !Number.isInteger(v) || v < 0) { this._toast("Enter a whole number, 0 or more"); break; }
+        // an exact total is meant to overwrite, so set_value is right here
+        this._svc("counter", "set_value", { value: v }, { entity_id: p.stars }).then(() => { i.value = ""; this._toast(`${p.name} now has ${v} ⭐`); }).catch(() => {});
+        break;
+      }
       case "rewards-edit": this._gate(() => this._openModal({ type: "rewards", edit: true, live: true })); break;
       case "rewards-back": this._openModal({ type: "rewards", edit: true, live: true }); break;
       case "reward-new": this._openModal({ type: "reward-form", emoji: "", name: "", cost: 5 }); break;

@@ -23,7 +23,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
-- **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card.
+- **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, or set an exact total (behind the parent PIN when one is set).
 - **Owed rewards**: every redeemed reward goes on an Owed list on the Chores tab until a parent taps **Given**. **↩** cancels it and gives the stars back. The kid's rewards screen shows what they're waiting on.
 - **Photos**: a person's Home Assistant photo replaces their initials on chips, Planner columns and chore rings.
 
@@ -186,6 +186,7 @@ node editor-test.js shots-editor      # drives the visual editor and checks the 
 node owed-test.js shots-owed          # photos, redeeming a reward, marking it given, refunding
 node today-lists-test.js shots-tl     # several lists stacked on Today
 node days-stars-test.js shots-ds      # day-based chores, star changes via counter increment/decrement
+node stars-adjust-test.js shots-sa    # parent star adjuster: PIN, +1/-1, set an exact total
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).
