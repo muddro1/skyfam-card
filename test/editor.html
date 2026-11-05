@@ -65,6 +65,21 @@ const todos = {
     {uid:"d3", summary:"🧸 Pick up toys", description:"evening 2⭐", status:"needs_action"}, {uid:"d4", summary:"🌙 Pajamas on", description:"evening", status:"needs_action"}],
 };
 const subs = {};
+// fake config flows, helpers and automation storage for the editor's setup buttons
+const slug = (n) => n.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+const registry = [{ entity_id: "todo.skyfam_rewards", config_entry_id: "x0" }];
+window.__created = [];
+const fakeSetupApi = async (path, body) => {
+  if (path === "config/config_entries/flow") return { type: "form", flow_id: "f" + Math.random(), step_id: "user" };
+  if (path.startsWith("config/config_entries/flow/")) {
+    const id = "todo." + slug(body.todo_list_name);
+    if (registry.some((e) => e.entity_id === id)) return { type: "abort", reason: "already_configured" };
+    const entry_id = "e" + Math.random(); window.__created.push({ todo: body.todo_list_name });
+    setTimeout(() => registry.push({ entity_id: id, config_entry_id: entry_id }), 300);
+    return { type: "create_entry", result: { entry_id } };
+  }
+  if (path.startsWith("config/automation/config/")) { window.__automation = { id: path.split("/").pop(), ...body }; return { result: "ok" }; }
+};
 const states = {
   "weather.forecast_home": { state:"rainy", attributes:{ temperature:71 } },
   "person.alex": { state:"home", attributes:{ entity_picture:"/test/avatars/alex.svg" } }, "person.jordan": { state:"not_home", attributes:{ entity_picture:"/test/avatars/jordan.svg" } }, "person.mia": { state:"unknown", attributes:{} },
@@ -74,7 +89,14 @@ const card = document.createElement("skyfam-card");
 let hass;
 const mkHass = () => ({
   states: { ...states },
-  callApi: async (m, path) => { const cal = path.split("?")[0].split("/")[1]; await new Promise(r=>setTimeout(r,50)); return EV[cal] || []; },
+  user: { is_admin: true },
+  callApi: async (m, path, body) => {
+    if (m === "POST") return fakeSetupApi(path, body);
+    const cal = path.split("?")[0].split("/")[1]; await new Promise(r=>setTimeout(r,50)); return EV[cal] || []; },
+  callWS: async (msg) => {
+    if (msg.type === "config/entity_registry/list") return registry.map((e) => ({ ...e }));
+    if (msg.type === "counter/create") { const id = slug(msg.name); window.__created.push({ counter: msg }); setTimeout(() => registry.push({ entity_id: "counter." + id, platform: "counter", unique_id: id }), 300); return { id, ...msg }; }
+  },
   callService: async (d, s, data, target) => {
     console.log("SERVICE", d, s, JSON.stringify(data), JSON.stringify(target));
     const e = target.entity_id;

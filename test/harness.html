@@ -9,13 +9,15 @@ const iso = (d, h, m=0) => { const x = new Date(d); x.setHours(h, m, 0, 0); retu
 const dstr = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const add = (n) => new Date(today.getTime() + n*86400000);
 const EV = {
-  "calendar.jordan": [0,1,2,3,7,8,9].map((n) => ({ uid:"k"+n, summary:"Office", start:{date:dstr(add(n))}, end:{date:dstr(add(n+1))} })),
+  "calendar.jordan": [...[0,1,2,3,7,8,9].map((n) => ({ uid:"k"+n, summary:"Office", start:{date:dstr(add(n))}, end:{date:dstr(add(n+1))} })),
+    {uid:"j1", summary:"Soccer Practice", start:{dateTime:iso(add(1),18)}, end:{dateTime:iso(add(1),19,30)}}],
   "calendar.leo": [{uid:"n1", summary:"[Leo] - Gymnastics", start:{dateTime:iso(today,16,15)}, end:{dateTime:iso(today,17)}, location:"Riverside Gym"}, {uid:"n2", summary:"[Leo] - Gymnastics", start:{dateTime:iso(add(7),16,15)}, end:{dateTime:iso(add(7),17)}}],
   "calendar.mia": [{uid:"e1", summary:"[Mia] - Tutoring", start:{dateTime:iso(add(1),16,30)}, end:{dateTime:iso(add(1),17,30)}, location:"Learning Center"},
     {uid:"e2", summary:"[Mia] - Soccer Practice", start:{dateTime:iso(add(1),18)}, end:{dateTime:iso(add(1),19,30)}}, {uid:"e3", summary:"[Mia] - Chess Club", start:{dateTime:iso(add(4),15)}, end:{dateTime:iso(add(4),16)}},
     {uid:"e4", summary:"[Mia] - Wear Green", start:{date:dstr(add(2))}, end:{date:dstr(add(3))}}],
   "calendar.alex": [{uid:"z1", summary:"HOA meeting", start:{dateTime:iso(add(2),19)}, end:{dateTime:iso(add(2),20,30)}, description:"Bring the budget handout"}, {uid:"z0", summary:"Morning standup", start:{dateTime:iso(today,8)}, end:{dateTime:iso(today,8,30)}}],
-  "calendar.family": [{uid:"f1", summary:"House cleaners", start:{dateTime:iso(add(2),9)}, end:{dateTime:iso(add(2),12)}}, {uid:"f2", summary:"Kids sleepover", start:{date:dstr(add(5))}, end:{date:dstr(add(7))}}],
+  "calendar.family": [{uid:"f1", summary:"House cleaners", start:{dateTime:iso(add(2),9)}, end:{dateTime:iso(add(2),12)}}, {uid:"f2", summary:"Kids sleepover", start:{date:dstr(add(5))}, end:{date:dstr(add(7))}},
+    {uid:"p1", summary:"Piano lesson", start:{dateTime:iso(add(2),17)}, end:{dateTime:iso(add(2),17,45)}, rrule:"FREQ=WEEKLY;INTERVAL=2", recurrence_id:"P3"}],
   "calendar.birthdays": [{uid:"b1", summary:"Grandpa's birthday", start:{date:dstr(add(3))}, end:{date:dstr(add(4))}}],
   "calendar.recycle_coach": [{uid:"r1", summary:"Garbage & Recycling", start:{date:dstr(add(3))}, end:{date:dstr(add(4))}}],
 };
@@ -36,6 +38,7 @@ const todos = {
 };
 const subs = {};
 const states = {
+  ...Object.fromEntries(Object.keys(EV).map((c) => [c, { state:"off", attributes:{ supported_features:7 } }])),
   "weather.forecast_home": { state:"rainy", attributes:{ temperature:71 } },
   "person.alex": { state:"home", attributes:{ entity_picture:"/test/avatars/alex.svg" } }, "person.jordan": { state:"not_home", attributes:{ entity_picture:"/test/avatars/jordan.svg" } }, "person.mia": { state:"unknown", attributes:{} },
   "counter.mia_stars": { state:"12", attributes:{ step:1 } }, "counter.leo_stars": { state:"4", attributes:{ step:1 } },
@@ -45,6 +48,21 @@ let hass;
 const mkHass = () => ({
   states: { ...states },
   callApi: async (m, path) => { const cal = path.split("?")[0].split("/")[1]; await new Promise(r=>setTimeout(r,50)); return EV[cal] || []; },
+  // calendar create / update / delete; changes EV so the card's refetch shows them
+  callWS: async (msg) => {
+    console.log("WS", JSON.stringify(msg));
+    const toEv = (uid, e) => ({ uid, summary:e.summary, location:e.location, description:e.description, rrule:e.rrule,
+      start: e.dtstart.length === 10 ? { date:e.dtstart } : { dateTime:e.dtstart }, end: e.dtend.length === 10 ? { date:e.dtend } : { dateTime:e.dtend } });
+    const list = EV[msg.entity_id] = EV[msg.entity_id] || [];
+    if (msg.type === "calendar/event/create") list.push(toEv("new" + list.length, msg.event));
+    if (msg.type === "calendar/event/update") {
+      const i = list.findIndex((e) => e.uid === msg.uid), n = toEv(msg.uid, msg.event);
+      if (msg.recurrence_id) { n.recurrence_id = list[i].recurrence_id; n.rrule = list[i].rrule; } // still part of the series
+      list.splice(i, 1, n);
+    }
+    if (msg.type === "calendar/event/delete") list.splice(list.findIndex((e) => e.uid === msg.uid), 1);
+    return null;
+  },
   callService: async (d, s, data, target) => {
     console.log("SERVICE", d, s, JSON.stringify(data), JSON.stringify(target));
     const e = target.entity_id;

@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.9.1";
+const SKYFAM_VERSION = "0.10.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -51,6 +51,38 @@ const parseDays = (text) => {
   const set = new Set((String(text || "").toLowerCase().match(/[a-z]+/g) || []).flatMap((w) => DAY_WORDS[w] || []));
   return set.size && set.size < 7 ? [...set].sort() : null;
 };
+// Repeat rules (RFC 5545 RRULE) for new events, and a plain-words version for the event details
+const RR_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const REPEATS = [{ v: "", label: "Doesn't repeat" }, { v: "DAILY", label: "Every day" }, { v: "WEEKLY", label: "Every week" }, { v: "WEEKLY2", label: "Every 2 weeks" }, { v: "MONTHLY", label: "Every month" }, { v: "YEARLY", label: "Every year" }];
+const buildRrule = (f) => {
+  if (!f.repeat) return "";
+  const freq = f.repeat === "WEEKLY2" ? "WEEKLY" : f.repeat;
+  let r = `FREQ=${freq}${f.repeat === "WEEKLY2" ? ";INTERVAL=2" : ""}`;
+  if (freq === "WEEKLY" && f.days.length) r += `;BYDAY=${f.days.map((d) => RR_DAYS[d]).join(",")}`;
+  // UNTIL is a date for all-day events, else UTC (RFC 5545 when DTSTART has a time zone)
+  if (f.until) r += `;UNTIL=${f.allDay ? f.until.replace(/-/g, "") : new Date(+parseLocalDate(f.until) + DAY_MS - 1000).toISOString().replace(/[-:]|\.\d{3}/g, "")}`;
+  return r;
+};
+const rruleText = (rr) => {
+  const p = Object.fromEntries(String(rr).split(";").map((x) => x.split("=")));
+  const unit = { DAILY: "day", WEEKLY: "week", MONTHLY: "month", YEARLY: "year" }[p.FREQ];
+  if (!unit) return "Repeats";
+  const n = Number(p.INTERVAL) || 1;
+  let t = n > 1 ? `Every ${n} ${unit}s` : `Every ${unit}`;
+  if (p.BYDAY) t += " on " + dayLabel(p.BYDAY.split(",").map((d) => RR_DAYS.indexOf(d.slice(-2))).filter((d) => d >= 0));
+  if (p.UNTIL) {
+    const u = p.UNTIL, d = u.endsWith("Z") ? new Date(Date.UTC(+u.slice(0, 4), +u.slice(4, 6) - 1, +u.slice(6, 8), +u.slice(9, 11), +u.slice(11, 13))) : new Date(+u.slice(0, 4), +u.slice(4, 6) - 1, +u.slice(6, 8));
+    t += ` until ${d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  }
+  return t;
+};
+// "2026-11-05", "16:30" -> "2026-11-05T16:30:00-05:00" in this device's time zone, the one the card shows times in
+const isoLocal = (ds, hm) => {
+  const [h, m] = hm.split(":").map(Number), d = parseLocalDate(ds); d.setHours(h, m);
+  const o = -d.getTimezoneOffset();
+  return `${ds}T${pad(h)}:${pad(m)}:00${o < 0 ? "-" : "+"}${pad(Math.floor(Math.abs(o) / 60))}:${pad(Math.abs(o) % 60)}`;
+};
+const CAL_DELETE = 2, CAL_UPDATE = 4; // calendar entity supported_features bits
 const dayLabel = (days) => days.map((d) => DAYS[d][0].toUpperCase() + DAYS[d].slice(1)).join(", ");
 // One-off chores carry dates ("2026-11-04") in the description and show only on those dates.
 const parseDates = (text) => String(text || "").match(/\d{4}-\d{2}-\d{2}/g);
@@ -270,7 +302,7 @@ class SkyFamCard extends HTMLElement {
         .then((evs) => evs.map((e) => this._normEvent(e, cal)))
         .catch((e) => { console.warn("skyfam calendar", cal, e); return []; })));
     const seen = new Set();
-    const events = results.flat().filter((e) => { const k = e.calendar + e.uid + e.start.getTime(); if (seen.has(k)) return false; seen.add(k); return true; })
+    const events = this._combine(results.flat().filter((e) => { const k = e.calendar + e.uid + e.start.getTime(); if (seen.has(k)) return false; seen.add(k); return true; }))
       .sort((a, b) => (b.allDay - a.allDay) || (a.start - b.start));
     this._events[key] = { ts: Date.now(), events, loading: false };
     this._render();
@@ -290,13 +322,28 @@ class SkyFamCard extends HTMLElement {
     }
     return {
       uid: e.uid || e.summary, title, rawTitle: e.summary, start, end, allDay,
-      location: e.location || "", description: e.description || "",
-      calendar: cal, owner, color: owner ? owner.color : "#999",
+      location: e.location || "", description: e.description || "", recurrenceId: e.recurrence_id || "", rrule: e.rrule || "",
+      calendar: cal, owner, owners: owner ? [owner] : [], color: owner ? owner.color : "#999",
     };
   }
 
+  // The same event on two people's calendars (same title, times and location) shows once, in both colors.
+  _combine(events) {
+    const out = new Map();
+    events.forEach((e) => {
+      const k = [e.title.trim().toLowerCase(), +e.start, +e.end, e.allDay, e.location.trim().toLowerCase()].join("|");
+      const m = out.get(k);
+      if (m && !m.sources.some((x) => x.calendar === e.calendar)) {
+        m.sources.push(e);
+        if (e.owner && !m.owners.includes(e.owner)) m.owners.push(e.owner);
+        if (!m.description) m.description = e.description;
+      } else out.set(m ? k + "|" + e.calendar + e.uid : k, Object.assign(e, { sources: [e], owners: [...e.owners] }));
+    });
+    return [...out.values()];
+  }
+
   _visible(events) {
-    return (events || []).filter((e) => !e.owner || !this._hidden.has(e.owner.key));
+    return (events || []).filter((e) => !e.owners.length || e.owners.some((o) => !this._hidden.has(o.key)));
   }
   _onDay(events, day) {
     const ds = startOfDay(day), de = addDays(ds, 1);
@@ -376,25 +423,72 @@ class SkyFamCard extends HTMLElement {
     await this._svc("todo", "add_item", { item: text.trim() }, { entity_id: entity });
   }
 
+  async _ws(msg) {
+    try { return await this._hass.callWS(msg); }
+    catch (e) { this._toast(`Couldn't save: ${e.message || e}`); throw e; }
+  }
+  _addCal(o) { return o.add_calendar || o.calendars[0]; }
+  _calFeatures(cal) { const st = this._hass.states[cal]; return st ? Number(st.attributes.supported_features) || 0 : 0; }
+  // Edit / delete only when every calendar the event is on allows it, and none is marked read only
+  _canChange(e) {
+    const ok = (bit) => e.sources.every((x) => (this._calFeatures(x.calendar) & bit) && !(x.owner && x.owner.read_only));
+    return { edit: ok(CAL_UPDATE), del: ok(CAL_DELETE) };
+  }
+  // Who a new event can be for. When editing, only owners whose new events go to the same calendar (moving between calendars isn't supported)
+  _whoChoices(e) {
+    const all = [...this._people, ...this._shared].filter((o) => !o.read_only);
+    if (!e) return all;
+    if (e.sources.length > 1) return e.owners;
+    const same = all.filter((o) => this._addCal(o) === e.calendar);
+    return e.owner && !same.includes(e.owner) ? [e.owner, ...same] : same;
+  }
+  _evData(f, owner, rrule) {
+    let summary = f.title.trim();
+    if (owner && owner.prefix_titles && !summary.startsWith("[")) summary = `[${owner.name}] - ${summary}`;
+    const endDate = ymd(addDays(parseLocalDate(f.date), f.allDay ? Math.max(1, f.span + 1) : f.span));
+    const ev = f.allDay ? { summary, dtstart: f.date, dtend: endDate } : { summary, dtstart: isoLocal(f.date, f.start), dtend: isoLocal(endDate, f.end) };
+    if (f.location) ev.location = f.location;
+    if (f.description) ev.description = f.description;
+    if (rrule) ev.rrule = rrule;
+    return ev;
+  }
+  _calChanged() { this._events = {}; this._render(); }
+
   async _createEvent(f) {
     const owner = [...this._people, ...this._shared].find((o) => o.key === f.who);
     if (!owner || !f.title.trim()) { this._toast("Add a title and pick who it's for"); return false; }
-    const cal = owner.add_calendar || owner.calendars[0];
-    let summary = f.title.trim();
-    if (owner.prefix_titles && !summary.startsWith("[")) summary = `[${owner.name}] - ${summary}`;
-    const data = { summary };
-    if (f.location) data.location = f.location;
-    if (f.allDay) {
-      data.start_date = f.date;
-      data.end_date = ymd(addDays(parseLocalDate(f.date), 1));
-    } else {
-      data.start_date_time = `${f.date} ${f.start}:00`;
-      data.end_date_time = `${f.date} ${f.end}:00`;
-    }
-    await this._svc("calendar", "create_event", data, { entity_id: cal });
-    this._events = {};
-    this._render();
+    // the websocket API, unlike the calendar.create_event action, takes a repeat rule
+    await this._ws({ type: "calendar/event/create", entity_id: this._addCal(owner), event: this._evData(f, owner, buildRrule(f)) });
+    this._calChanged();
     return true;
+  }
+
+  // scope: undefined for a one-time event, "one" or "future" for a repeating one
+  async _updateEvent(e, f, scope) {
+    if (!f.title.trim()) { this._toast("Add a title"); return false; }
+    const chosen = [...this._people, ...this._shared].find((o) => o.key === f.who);
+    try {
+      for (const x of e.sources) {
+        const owner = e.sources.length > 1 ? x.owner : chosen || x.owner;
+        const rrule = scope === "one" ? "" : scope === "future" ? x.rrule : buildRrule(f);
+        const msg = { type: "calendar/event/update", entity_id: x.calendar, uid: x.uid, event: this._evData(f, owner, rrule) };
+        if (scope) msg.recurrence_id = x.recurrenceId;
+        if (scope === "future") msg.recurrence_range = "THISANDFUTURE";
+        await this._ws(msg);
+      }
+    } finally { this._calChanged(); }
+    return true;
+  }
+
+  async _deleteEvent(e, scope) {
+    try {
+      for (const x of e.sources) {
+        const msg = { type: "calendar/event/delete", entity_id: x.calendar, uid: x.uid };
+        if (scope) msg.recurrence_id = x.recurrenceId;
+        if (scope === "future") msg.recurrence_range = "THISANDFUTURE";
+        await this._ws(msg);
+      }
+    } finally { this._calChanged(); }
   }
 
   _rewards() {
@@ -586,8 +680,10 @@ class SkyFamCard extends HTMLElement {
   /* ---------- views ---------- */
   _evPill(e, opts = {}) {
     const time = e.allDay ? "" : `<b>${this._fmtTime(e.start)}</b> `;
-    return `<button class="pill ${e.allDay ? "allday" : ""} ${opts.past ? "past" : ""}" style="--c:${e.color}" data-act="event" data-id="${esc(this._evId(e))}">${time}${esc(e.title)}</button>`;
+    return `<button class="pill ${e.allDay ? "allday" : ""} ${opts.past ? "past" : ""} ${e.owners.length > 1 ? "multi" : ""}" style="${this._evStyle(e)}" data-act="event" data-id="${esc(this._evId(e))}">${time}${esc(e.title)}</button>`;
   }
+  // --c is the first owner's color, --c2 the second's when the event is on two people's calendars
+  _evStyle(e) { return `--c:${e.color}${e.owners.length > 1 ? `;--c2:${e.owners[1].color}` : ""}`; }
   _evId(e) { return e.calendar + "|" + e.uid + "|" + e.start.getTime(); }
   _fmtTime(d) { return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(":00", "").replace(/\s?([AP])M/i, (m, a) => a.toLowerCase()); }
 
@@ -603,11 +699,11 @@ class SkyFamCard extends HTMLElement {
         const wx = this._evWeather(ev);
         const past = !ev.allDay && ev.end < now;
         const nowOn = !ev.allDay && ev.start <= now && ev.end > now;
-        return `<button class="agenda ${past ? "past" : ""} ${nowOn ? "now" : ""}" style="--c:${ev.color}" data-act="event" data-id="${esc(this._evId(ev))}">
+        return `<button class="agenda ${past ? "past" : ""} ${nowOn ? "now" : ""} ${ev.owners.length > 1 ? "multi" : ""}" style="${this._evStyle(ev)}" data-act="event" data-id="${esc(this._evId(ev))}">
           <span class="a-time">${ev.allDay ? "All day" : `${this._fmtTime(ev.start)}<small>${this._fmtTime(ev.end)}</small>`}</span>
           <span class="a-bar"></span>
           <span class="a-main"><span class="a-title">${esc(ev.title)}</span>${ev.location || wx ? `<span class="a-loc">${wx ? `<span class="a-wx">${WEATHER_ICON[wx.condition] || "🌡️"} ${Math.round(wx.temperature)}°</span>` : ""}${ev.location ? `📍 ${esc(ev.location.split(",")[0])}` : ""}</span>` : ""}</span>
-          ${ev.owner ? `<span class="a-who" style="--c:${ev.color}">${esc(ev.owner.name)}</span>` : ""}
+          ${ev.owners.length ? `<span class="a-whos">${ev.owners.map((o) => `<span class="a-who" style="--c:${o.color}">${esc(o.name)}</span>`).join("")}</span>` : ""}
         </button>`;
       }).join("") : `<div class="empty small">${all.length ? "Nothing left today" : "Nothing planned"}</div>`;
       return `<div class="day-block"><h3>${label}</h3>${rows}</div>`;
@@ -689,12 +785,12 @@ class SkyFamCard extends HTMLElement {
     const label = day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
     if (events === null) return this._navBar(label) + `<div class="empty">Loading…</div>`;
     const list = this._onDay(this._visible(events), day);
-    const colOf = (e) => (!e.owner || e.owner.shared ? "shared" : e.owner.key);
+    const colsOf = (e) => (e.owners.length ? e.owners.map((o) => (o.shared ? "shared" : o.key)) : ["shared"]);
     const ds = +day;
     const hourRows = [...Array(h1 - h0)].map((_, i) => `<div class="pl-hr" style="top:${i * H}px"><span>${new Date(ds + (h0 + i) * 3600000).toLocaleTimeString([], { hour: "numeric" }).replace(/\s?([AP])M/i, (m, a) => a.toLowerCase())}</span></div>`).join("");
     const allCells = [];
     const body = cols.map((c) => {
-      const mine = list.filter((e) => colOf(e) === c.key);
+      const mine = list.filter((e) => colsOf(e).includes(c.key));
       const allDay = mine.filter((e) => e.allDay);
       const timed = mine.filter((e) => !e.allDay).map((e) => {
         const st = Math.max((e.start - ds) / 3600000, h0), en = Math.min((e.end - ds) / 3600000, h1);
@@ -713,7 +809,7 @@ class SkyFamCard extends HTMLElement {
       const blocks = timed.map(({ e, st, en, lane, lanes }) => {
         const top = (st - h0) * H, height = Math.max((en - st) * H - 3, 24);
         const past = e.end < now;
-        return `<button class="pl-ev ${past ? "past" : ""} ${height < 44 ? "short" : ""}" style="--c:${e.color};top:${top}px;height:${height}px;left:calc(${(lane / lanes) * 100}% + 3px);width:calc(${100 / lanes}% - 6px)" data-act="event" data-id="${esc(this._evId(e))}">
+        return `<button class="pl-ev ${past ? "past" : ""} ${height < 44 ? "short" : ""} ${e.owners.length > 1 ? "multi" : ""}" style="${this._evStyle(e)};top:${top}px;height:${height}px;left:calc(${(lane / lanes) * 100}% + 3px);width:calc(${100 / lanes}% - 6px)" data-act="event" data-id="${esc(this._evId(e))}">
           <b>${esc(e.title)}</b><span>${this._fmtTime(e.start)} – ${this._fmtTime(e.end)}${e.location ? ` · ${esc(e.location.split(",")[0])}` : ""}</span></button>`;
       }).join("");
       const slots = [...Array(h1 - h0)].map((_, i) => `<div class="pl-slot" style="top:${i * H}px;height:${H}px" data-act="slot" data-h="${h0 + i}" data-who="${esc(c.shared ? (this._shared[0] || {}).key || "" : c.key)}"></div>`).join("");
@@ -776,7 +872,7 @@ class SkyFamCard extends HTMLElement {
       const list = this._onDay(vis, d);
       const more = list.length > 3 ? `<span class="more">+${list.length - 3} more</span>` : "";
       return `<div class="mc ${d.getMonth() !== m ? "out" : ""} ${sameDay(d, now) ? "today" : ""}" data-act="day" data-date="${ymd(d)}">
-        <span class="mcd">${d.getDate()}</span>${list.slice(0, 3).map((ev) => `<span class="mp" style="--c:${ev.color}">${ev.allDay ? "" : `<b>${this._fmtTime(ev.start)}</b> `}${esc(ev.title)}</span>`).join("")}${more}</div>`;
+        <span class="mcd">${d.getDate()}</span>${list.slice(0, 3).map((ev) => `<span class="mp ${ev.owners.length > 1 ? "multi" : ""}" style="${this._evStyle(ev)}">${ev.allDay ? "" : `<b>${this._fmtTime(ev.start)}</b> `}${esc(ev.title)}</span>`).join("")}${more}</div>`;
     }).join("");
     const label = this._anchor.toLocaleDateString([], { month: "long", year: "numeric" });
     return this._navBar(label) + (events === null ? `<div class="empty">Loading…</div>` : `<div class="month" style="grid-template-rows:auto repeat(${this._weeks}, minmax(78px, 1fr))">${heads}${cells}</div>`);
@@ -850,9 +946,15 @@ class SkyFamCard extends HTMLElement {
       const e = m.ev;
       const when = e.allDay ? `${e.start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · All day`
         : `${e.start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${this._fmtTime(e.start)} – ${this._fmtTime(e.end)}`;
-      inner = `<div class="m-bar" style="--c:${e.color}"></div><h2>${esc(e.title)}</h2><p class="m-when">${when}</p>
-        ${e.owner ? `<p><span class="a-who" style="--c:${e.color}">${esc(e.owner.name)}</span></p>` : ""}
-        ${e.location ? `<p>📍 ${esc(e.location)}</p>` : ""}${e.description ? `<p class="m-desc">${esc(e.description)}</p>` : ""}`;
+      const can = this._canChange(e), rec = !!e.recurrenceId;
+      const del = can.del ? (rec ? `<button class="btn danger" data-act="event-del" data-scope="one">Delete this one</button><button class="btn danger" data-act="event-del" data-scope="future">Delete this and later</button>`
+        : `<button class="btn danger" data-act="event-del">Delete</button>`) : "";
+      inner = `<div class="m-bar ${e.owners.length > 1 ? "multi" : ""}" style="${this._evStyle(e)}"></div><h2>${esc(e.title)}</h2><p class="m-when">${when}</p>
+        ${e.rrule || rec ? `<p class="m-when">🔁 ${esc(e.rrule ? rruleText(e.rrule) : "Repeats")}</p>` : ""}
+        ${e.owners.length ? `<p class="a-whos">${e.owners.map((o) => `<span class="a-who" style="--c:${o.color}">${esc(o.name)}</span>`).join("")}</p>` : ""}
+        ${e.location ? `<p>📍 ${esc(e.location)}</p>` : ""}${e.description ? `<p class="m-desc">${esc(e.description)}</p>` : ""}
+        ${e.sources.length > 1 && (can.edit || can.del) ? `<p class="m-when"><small>Changes apply to all ${e.sources.length} calendars it's on.</small></p>` : ""}
+        ${can.edit || can.del ? `<div class="row end wrap">${del}<span class="grow"></span>${can.edit ? `<button class="btn primary" data-act="event-edit">✏️ Edit</button>` : ""}</div>` : ""}`;
     } else if (m.type === "day") {
       const d = parseLocalDate(m.date);
       const evs = this._onDay(this._visible(this._eventsFor(...this._range())), d);
@@ -860,14 +962,23 @@ class SkyFamCard extends HTMLElement {
         ${evs.map((ev) => this._evPill(ev)).join("") || `<div class="empty small">Nothing planned</div>`}
         <button class="btn primary" data-act="add-event" data-date="${m.date}">＋ Add event</button>`;
     } else if (m.type === "add") {
-      const who = [...this._people, ...this._shared].filter((o) => !o.read_only);
-      inner = `<h2>New event</h2>
-        <input class="in" name="title" placeholder="What's happening?" data-keep="m-title">
+      const e = m.edit;
+      const who = this._whoChoices(e);
+      const rec = e && !!e.recurrenceId;
+      const wd = parseLocalDate(m.date).getDay();
+      const save = rec ? `<button class="btn primary" data-act="save-event" data-scope="one">Save this one</button><button class="btn primary" data-act="save-event" data-scope="future">Save this and later</button>`
+        : `<button class="btn primary" data-act="save-event">Save</button>`;
+      inner = `<h2>${e ? "Edit event" : "New event"}</h2>
+        <input class="in" name="title" placeholder="What's happening?" data-keep="m-title" value="${esc(e ? e.title : "")}">
         <div class="who">${who.map((o) => `<label class="whochip" style="--c:${o.color}"><input type="radio" name="who" value="${esc(o.key)}" ${o.key === m.who ? "checked" : ""}><span>${esc(o.name)}</span></label>`).join("")}</div>
-        <div class="row"><input class="in" type="date" name="date" value="${m.date}"><label class="cb"><input type="checkbox" name="allDay"> All day</label></div>
+        <div class="row"><input class="in" type="date" name="date" value="${m.date}"><label class="cb"><input type="checkbox" name="allDay" ${m.allDay ? "checked" : ""}> All day</label></div>
         <div class="row times"><input class="in" type="time" name="start" value="${m.start}"><span>to</span><input class="in" type="time" name="end" value="${m.end}"></div>
-        <input class="in" name="location" placeholder="Location (optional)">
-        <div class="row end"><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save-event">Save</button></div>`;
+        ${rec ? "" : `<select class="in" name="repeat">${REPEATS.map((r) => `<option value="${r.v}">${r.label}</option>`).join("")}</select>
+        <div class="rr-more"><div class="who rr-days">${[0, 1, 2, 3, 4, 5, 6].map((i) => (i + (Number(this._config.first_day) || 0)) % 7).map((d) => `<label class="whochip" style="--c:var(--accent)"><input type="checkbox" name="rday" value="${d}" ${d === wd ? "checked" : ""}><span>${dayLabel([d])}</span></label>`).join("")}</div>
+        <label class="row rr-until"><span>Until <small>(optional)</small></span><input class="in" type="date" name="until"></label></div>`}
+        <input class="in" name="location" placeholder="Location (optional)" value="${esc(e ? e.location : "")}">
+        <textarea class="in" name="description" rows="2" placeholder="Notes (optional)">${esc(e ? e.description : "")}</textarea>
+        <div class="row end wrap"><button class="btn" data-act="close">Cancel</button>${save}</div>`;
     } else if (m.type === "rewards") {
       const rw = this._rewards();
       const p = m.person && this._people.find((x) => x.name === m.person);
@@ -977,10 +1088,30 @@ class SkyFamCard extends HTMLElement {
         const mod = this.shadowRoot.querySelector(".modal");
         const q = (n) => mod.querySelector(`[name="${n}"]`);
         const who = mod.querySelector('[name="who"]:checked');
-        const f = { title: q("title").value, who: who ? who.value : "", date: q("date").value, allDay: q("allDay").checked, start: q("start").value, end: q("end").value, location: q("location").value };
-        if (!f.allDay && f.end <= f.start) { this._toast("End time must be after start"); break; }
-        el.disabled = true;
-        this._createEvent(f).then((ok) => { if (ok) { this._closeModal(); this._toast("Event added ✓"); } else el.disabled = false; }).catch(() => (el.disabled = false));
+        const m = this._modal;
+        const f = { title: q("title").value, who: who ? who.value : "", date: q("date").value, allDay: q("allDay").checked, start: q("start").value, end: q("end").value,
+          location: q("location").value.trim(), description: q("description").value.trim(), span: m.span || 0,
+          repeat: q("repeat") ? q("repeat").value : "", days: [...mod.querySelectorAll('[name="rday"]:checked')].map((x) => Number(x.value)), until: q("until") ? q("until").value : "" };
+        if (!f.allDay && !f.span && f.end <= f.start) { this._toast("End time must be after start"); break; }
+        if (f.until && f.until < f.date) { this._toast("Repeat until must be after the start"); break; }
+        mod.querySelectorAll("[data-act=save-event]").forEach((b) => (b.disabled = true));
+        const done = m.edit ? this._updateEvent(m.edit, f, el.dataset.scope) : this._createEvent(f);
+        done.then((ok) => { if (ok) { this._closeModal(); this._toast(m.edit ? "Event saved ✓" : "Event added ✓"); } else throw 0; })
+          .catch(() => mod.querySelectorAll("[data-act=save-event]").forEach((b) => (b.disabled = false)));
+        break;
+      }
+      case "event-edit": {
+        const e = this._modal.ev;
+        const endDay = e.allDay ? addDays(e.end, -1) : e.end;
+        const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        this._openModal({ type: "add", edit: e, who: (e.owner || {}).key, date: ymd(e.start), allDay: e.allDay, start: e.allDay ? "09:00" : hm(e.start), end: e.allDay ? "10:00" : hm(e.end),
+          span: Math.max(0, Math.round((startOfDay(endDay) - startOfDay(e.start)) / DAY_MS)) }); // keeps multi-day events multi-day
+        break;
+      }
+      case "event-del": {
+        const e = this._modal.ev, scope = el.dataset.scope;
+        this._openModal({ type: "confirm", text: scope === "future" ? `Delete “${e.title}” on this day and every time after?` : scope ? `Delete only this “${e.title}”?` : `Delete “${e.title}”?`,
+          onYes: () => this._deleteEvent(e, scope).then(() => this._toast("Event deleted")) });
         break;
       }
       case "close": this._closeModal(); break;
@@ -1289,6 +1420,15 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .btn { padding:12px 20px; border-radius:14px; background:var(--line); font-weight:800; } .btn.primary { background:var(--accent); color:#fff; }
 .btn:disabled { opacity:.5; }
 .modal:has(input[name="allDay"]:checked) .times { display:none; }
+.rr-more { display:none; flex-direction:column; gap:10px; } .modal:has(select[name="repeat"] option:checked:not([value=""])) .rr-more { display:flex; }
+.rr-days { display:none; } .modal:has(select[name="repeat"] option:checked[value^="WEEKLY"]) .rr-days { display:flex; }
+.rr-until { align-items:center; gap:10px; font-weight:700; color:var(--mute); } .rr-until span { white-space:nowrap; }
+textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
+.a-whos { display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; } p.a-whos { justify-content:flex-start; }
+.pill.multi, .pl-ev.multi { border-image:linear-gradient(var(--c) 50%, var(--c2) 50%) 1; }
+.pill.allday.multi, .m-bar.multi { background:linear-gradient(90deg, var(--c) 50%, var(--c2) 50%); }
+.agenda.multi .a-bar { background:linear-gradient(var(--c) 50%, var(--c2) 50%); }
+.mp.multi { background:linear-gradient(90deg, color-mix(in srgb, var(--c) 25%, var(--card)) 50%, color-mix(in srgb, var(--c2) 25%, var(--card)) 50%); }
 .rewards { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:10px; }
 .reward { display:flex; flex-direction:column; align-items:center; gap:4px; background:var(--bg); border-radius:18px; padding:14px; font-weight:800; text-align:center; }
 .reward .ri { font-size:34px; } .reward .rc { color:#b88400; } .reward.locked { opacity:.45; }
@@ -1482,17 +1622,122 @@ const edClean = (o, order) => {
   return out;
 };
 
+/* ---------- setup: create the lists, counters and reset automation from the editor (admin only) ---------- */
+const SF_RESET_ID = "skyfam_reset_chores";
+const sfErr = (e) => (e && (e.message || (e.body && e.body.message) || e.error)) || String(e);
+// the new entity shows up in the registry a moment after the config entry or helper is created
+async function sfRegistryFind(hass, pred) {
+  for (let t = 0; t < 20; t++) {
+    const e = (await hass.callWS({ type: "config/entity_registry/list" })).find(pred);
+    if (e) return e.entity_id;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error("it was created, but its entity didn't show up yet. Pick it from the dropdown");
+}
+async function sfCreateTodo(hass, name) {
+  const f = await hass.callApi("POST", "config/config_entries/flow", { handler: "local_todo", show_advanced_options: false });
+  const r = await hass.callApi("POST", `config/config_entries/flow/${f.flow_id}`, { todo_list_name: name });
+  if (r.type !== "create_entry") throw new Error(r.reason === "already_configured" ? `a list called "${name}" already exists. Pick it from the dropdown` : `Home Assistant said ${r.reason || r.type}`);
+  return sfRegistryFind(hass, (e) => e.config_entry_id === r.result.entry_id);
+}
+async function sfCreateCounter(hass, name) {
+  // step 1 matters: _addStars increments one star at a time
+  const item = await hass.callWS({ type: "counter/create", name, icon: "mdi:star", initial: 0, minimum: 0, step: 1, restore: true });
+  return sfRegistryFind(hass, (e) => e.platform === "counter" && e.unique_id === item.id);
+}
+// same as examples/reset-chores-automation.yaml
+const sfResetAutomation = (charts) => ({
+  alias: "Chore charts: reset overnight",
+  description: "Reopens completed chores and removes past one-off chores on the kids' chore charts each night. Made by SkyFam; press the button in the card editor again after adding a kid.",
+  mode: "single",
+  triggers: [{ trigger: "time", at: "00:05:00" }],
+  actions: [{ repeat: { for_each: charts, sequence: [
+    { variables: { chart: "{{ repeat.item }}" } },
+    { action: "todo.get_items", target: { entity_id: "{{ chart }}" }, data: { status: ["needs_action", "completed"] }, response_variable: "all" },
+    { variables: {
+      today: "{{ now().date() | string }}",
+      old: "{% set ns = namespace(uids=[]) %} {% for i in all[chart]['items'] %} {% set d = (i.description or '') | regex_findall('\\d{4}-\\d{2}-\\d{2}') %} {% if d and d | max < today %}{% set ns.uids = ns.uids + [i.uid] %}{% endif %} {% endfor %} {{ ns.uids }}",
+      reopen: "{{ all[chart]['items'] | selectattr('status', 'eq', 'completed') | map(attribute='uid') | reject('in', old) | list }}",
+    } },
+    { if: "{{ old | count > 0 }}", then: [{ action: "todo.remove_item", target: { entity_id: "{{ chart }}" }, data: { item: "{{ old }}" } }] },
+    { repeat: { for_each: "{{ reopen }}", sequence: [{ action: "todo.update_item", target: { entity_id: "{{ chart }}" }, data: { item: "{{ repeat.item }}", status: "needs_action" } }] } },
+  ] } }],
+});
+
 class SkyFamCardEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._open = new Set(["general", "people"]);
     this._forms = [];
+    this._busy = new Set();
+    this._setupErr = {};
+    this._setupDone = new Set();
+    this.shadowRoot.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-setup]");
+      if (b) this._onSetup(b.dataset.setup);
+    });
+  }
+
+  _canSetup() { const h = this._hass; return !!(h && h.callWS && h.callApi); }
+
+  _setupHtml(key) {
+    const c = this._config, h = this._hass;
+    if (!this._canSetup()) return "";
+    if (h.user && !h.user.is_admin) return key === "chores" ? `<small>An admin can create the chore lists, star counters and rewards lists from here.</small>` : "";
+    const err = this._setupErr[key] ? `<div class="err">Couldn't finish: ${esc(this._setupErr[key])}</div>` : "";
+    const btn = (k, label, help) => `<div class="setup"><button data-setup="${k}" ${this._busy.has(k) ? "disabled" : ""}>${this._busy.has(k) ? "Creating…" : label}</button>${help ? `<small>${help}</small>` : ""}${this._setupErr[k] ? `<div class="err">Couldn't finish: ${esc(this._setupErr[k])}</div>` : ""}</div>`;
+    if (key.startsWith("people-")) {
+      const p = c.people[Number(key.split("-")[1])];
+      if (!p || (p.chores && p.stars)) return err;
+      const what = !p.chores && !p.stars ? "chore list and star counter" : !p.chores ? "chore list" : "star counter";
+      return btn(key, `✨ Create a ${what} for ${esc(p.name || "this person")}`, "For kids. Makes a Local To-do list and a counter helper in Home Assistant and fills them in here");
+    }
+    const out = [];
+    if (!c.rewards_list || !c.rewards_owed_list) out.push(btn("rewards", "✨ Create rewards lists", "Makes \"SkyFam Rewards\" and \"SkyFam Rewards Owed\" Local To-do lists and fills them in here"));
+    const kids = c.people.filter((p) => p.chores);
+    if (kids.length) {
+      const exists = this._setupDone.has("reset") || Object.values(h.states || {}).some((s) => s.entity_id && s.entity_id.startsWith("automation.") && s.attributes && s.attributes.id === SF_RESET_ID);
+      out.push(btn("reset", `🌙 ${exists ? "Update" : "Create"} the nightly chore reset`, `An automation that reopens finished chores at 00:05 and deletes past one-off chores for ${esc(kids.map((p) => p.name).join(", "))}. Press again after you add a kid`));
+    }
+    return out.join("");
+  }
+
+  _refreshSetup() {
+    if (!this.shadowRoot) return;
+    // only touch the DOM when something changed, so a state update can't swallow a click mid-press
+    this.shadowRoot.querySelectorAll("[data-setup-box]").forEach((b) => { const v = this._setupHtml(b.dataset.setupBox); if (b._v !== v) { b._v = v; b.innerHTML = v; } });
+  }
+
+  async _onSetup(key) {
+    if (this._busy.has(key)) return;
+    this._busy.add(key);
+    delete this._setupErr[key];
+    this._refreshSetup();
+    const h = this._hass;
+    // re-read this._config after each await: Home Assistant may hand the editor a fresh copy of the config meanwhile
+    const put = (fn) => { fn(this._config); this._emit(); };
+    try {
+      if (key === "rewards") {
+        if (!this._config.rewards_list) { const e = await sfCreateTodo(h, "SkyFam Rewards"); put((c) => (c.rewards_list = e)); }
+        if (!this._config.rewards_owed_list) { const e = await sfCreateTodo(h, "SkyFam Rewards Owed"); put((c) => (c.rewards_owed_list = e)); }
+      } else if (key === "reset") {
+        await h.callApi("POST", `config/automation/config/${SF_RESET_ID}`, sfResetAutomation(this._config.people.map((p) => p.chores).filter(Boolean)));
+        this._setupDone.add("reset");
+      } else {
+        const i = Number(key.split("-")[1]), name = this._config.people[i].name || `Person ${i + 1}`;
+        if (!this._config.people[i].chores) { const e = await sfCreateTodo(h, `${name}'s Chore Chart`); put((c) => (c.people[i].chores = e)); }
+        if (!this._config.people[i].stars) { const e = await sfCreateCounter(h, `${name} Stars`); put((c) => (c.people[i].stars = e)); }
+      }
+    } catch (e) { this._setupErr[key] = sfErr(e); }
+    this._busy.delete(key);
+    this._refresh();
   }
 
   set hass(h) {
     this._hass = h;
     this._forms.forEach((f) => (f.el.hass = h));
+    if (this._config) this._refreshSetup();
   }
 
   setConfig(config) {
@@ -1597,6 +1842,7 @@ class SkyFamCardEditor extends HTMLElement {
         if (!this._config.tabs || !this._config.tabs.length || this._config.tabs.join() === NAV.map((n) => n.id).join()) delete this._config.tabs;
       });
     this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
+    slot("chores").insertAdjacentHTML("beforeend", `<div data-setup-box="chores"></div>`);
     this._form(slot("planner"), ED_SCHEMA.planner,
       () => (c = this._config, { planner_start_hour: c.planner_start_hour ?? 6, planner_end_hour: c.planner_end_hour ?? 22, planner_hour_height: c.planner_hour_height ?? 64, planner_shared_name: c.planner_shared_name }),
       (v) => {
@@ -1616,8 +1862,10 @@ class SkyFamCardEditor extends HTMLElement {
           this._config[group][i] = { ...this._config[group][i], ...v };
           this._refreshHeader(group, i);
         });
+        if (group === "people") s.insertAdjacentHTML("beforeend", `<div data-setup-box="people-${i}"></div>`);
       });
     });
+    this._refreshSetup();
 
     root.querySelectorAll("details").forEach((d) => d.addEventListener("toggle", () => {
       d.open ? this._open.add(d.dataset.sec) : this._open.delete(d.dataset.sec);
@@ -1651,6 +1899,7 @@ class SkyFamCardEditor extends HTMLElement {
     if (nm) nm.textContent = this._itemLabel(group, p, i);
     const bd = this.shadowRoot.querySelector(`[data-badges="${group}-${i}"]`);
     if (bd) bd.innerHTML = this._badges(group, p);
+    this._refreshSetup();
   }
   _refresh() {
     this._forms.forEach((f) => { f.el.hass = this._hass; f.el.data = f.getData(); });
@@ -1727,6 +1976,11 @@ details.item[open] > summary { border-bottom:1px solid var(--divider-color, #e0e
 .tools .del.sure { color:#fff; background:var(--error-color, #db4437); }
 .add { border:1px dashed var(--divider-color, #ccc); background:none; border-radius:10px; width:100%; padding:10px; cursor:pointer; color:var(--primary-color, #03a9f4); font:inherit; font-weight:600; }
 .add:hover { background:var(--secondary-background-color, #f5f5f5); }
+.setup { margin-top:12px; display:flex; flex-direction:column; gap:4px; }
+.setup button { align-self:flex-start; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; font:inherit; font-weight:600; background:var(--primary-color, #03a9f4); color:var(--text-primary-color, #fff); }
+.setup button:disabled { opacity:.6; cursor:default; }
+.setup small, [data-setup-box] > small { color:var(--secondary-text-color); font-size:12px; }
+.err { color:var(--error-color, #db4437); font-size:13px; }
 `;
 
 if (!customElements.get("skyfam-card-editor")) customElements.define("skyfam-card-editor", SkyFamCardEditor);

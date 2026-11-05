@@ -21,6 +21,8 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Today**: schedule for today and the next two days, each kid's chore progress, and your first list. Events that have ended are greyed out, or hidden with `today_past_events: hide`. With `event_weather: true` each event shows the forecast for its time.
 - **Planner**: today as an hourly timeline with a column for each person (plus one for shared calendars), an all-day row, and a red line at the current time. Tap an empty slot to add an event for that person at that hour. Opens scrolled to now.
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
+- **Events**: tap one for details, then **Edit** or **Delete**. For a repeating event you choose this one or this one and every later one. New events can repeat (every day, week, 2 weeks, month or year, on chosen weekdays, until a date) and take notes. Edit and Delete only show when the calendar supports them (Local Calendar and Google do; CalDAV may not).
+- **Same event, two calendars**: an event with the same title, times and location on two people's calendars shows once, in both colors and in both Planner columns. Edits and deletes apply to every copy.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card. To move a chore to another kid, edit it and change who it's for; tick more than one kid to copy it.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
 - **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, or set an exact total (behind the parent PIN when one is set).
@@ -57,9 +59,13 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 ### Manual
 
 1. Copy `dist/skyfam-card.js` to `/config/www/skyfam-card.js`.
-2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.9.1` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.10.0` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
 
 ## Setup
+
+**Quick way:** add the card (step 5 below) first, then open its **Edit** screen as an admin. Each person without a chore list or star counter gets a **✨ Create a chore list and star counter** button. **Chores and rewards** has **✨ Create rewards lists** and **🌙 Create the nightly chore reset** buttons. The buttons create the Local To-do lists, counters (step 1, minimum 0) and the reset automation, then fill them in for you. After you add another kid, press the reset button again so the automation includes their list.
+
+To do it by hand instead:
 
 1. **Chore lists**: Settings → Devices & services → Add integration → **Local To-do**. Create one list per kid (for example "Mia's Chore Chart").
 2. **Stars**: Settings → Devices & services → Helpers → Create helper → **Counter**, one per kid, minimum 0.
