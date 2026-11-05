@@ -21,7 +21,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Today**: schedule for today and the next two days, each kid's chore progress, and your first list. Events that have ended are greyed out, or hidden with `today_past_events: hide`. With `event_weather: true` each event shows the forecast for its time.
 - **Planner**: today as an hourly timeline with a column for each person (plus one for shared calendars), an all-day row, and a red line at the current time. Tap an empty slot to add an event for that person at that hour. Opens scrolled to now.
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
-- **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card.
+- **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card. To move a chore to another kid, edit it and change who it's for; tick more than one kid to copy it.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
 - **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, or set an exact total (behind the parent PIN when one is set).
 - **Owed rewards**: every redeemed reward goes on an Owed list on the Chores tab until a parent taps **Given**. **↩** cancels it and gives the stars back. The kid's rewards screen shows what they're waiting on.
@@ -57,7 +57,7 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 ### Manual
 
 1. Copy `dist/skyfam-card.js` to `/config/www/skyfam-card.js`.
-2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.9.0` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.9.1` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
 
 ## Setup
 

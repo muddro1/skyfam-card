@@ -48,6 +48,20 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   await c().locator(".bank").first().click(); await c().locator("[data-act=redeem]").first().click();
   await c().locator("[data-act=confirm-yes]").click(); await pg.waitForTimeout(400);
   assert.match(await c().locator(".bank").first().innerText(), /⭐ 7/); await shot("3-after-redeem");
+  // reassign Mia's "Unload silverware" to Leo: added to Leo first, then removed from Mia
+  logs.length = 0;
+  await c().locator("[data-act=chore-edit]").click(); await pg.waitForTimeout(200);
+  await c().locator(".kid:has-text('Mia') .chore:has-text('Unload silverware')").click();
+  await c().locator(".modal label:has(input[name=kid][value=Mia]) span").click();
+  await c().locator(".modal label:has(input[name=kid][value=Leo]) span").click(); await shot("6-reassign");
+  await c().locator("[data-act=chore-save]").click(); await pg.waitForTimeout(300);
+  const svc = logs.filter(l => l.startsWith("SERVICE todo"));
+  assert.ok(svc[0].startsWith("SERVICE todo add_item") && svc[0].includes("todo.leo_chores"), svc.join("\n"));
+  assert.ok(svc[1].startsWith("SERVICE todo remove_item") && svc[1].includes("todo.mia_chores"), svc.join("\n"));
+  assert.equal(await c().locator(".kid:has-text('Leo') .chore:has-text('Unload silverware')").count(), 1, "now Leo's");
+  assert.equal(await c().locator(".kid:has-text('Mia') .chore:has-text('Unload silverware')").count(), 0, "gone from Mia");
+  assert.ok(await c().locator(".toast").innerText().then(t => t.includes("moved to Leo")), "moved toast");
+  await shot("7-reassigned");
   console.log("PASS");
  } catch (e) { console.log("FAIL", e.message); process.exitCode = 1; }
  const errs = logs.filter(l => l.startsWith("PAGEERROR")); if (errs.length) { console.log(errs.join("\n")); process.exitCode = 1; }

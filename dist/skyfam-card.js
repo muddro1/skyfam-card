@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.9.0";
+const SKYFAM_VERSION = "0.9.1";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -453,14 +453,16 @@ class SkyFamCard extends HTMLElement {
     // A date makes it a one-off, so chosen days are dropped.
     const days = f.date ? f.date : f.days && f.days.length && f.days.length < 7 ? f.days.map((d) => DAYS[d]).join(",") : "";
     const description = f.period + (f.stars > 0 ? ` ${f.stars}⭐` : "") + (days ? ` ${days}` : "");
-    if (f.uid) {
-      const p = this._people.find((x) => x.name === f.person);
-      await this._svc("todo", "update_item", { item: f.uid, rename: summary, description }, { entity_id: p.chores });
-    } else {
-      const kids = this._people.filter((x) => x.chores && f.kids.includes(x.name));
-      if (!kids.length) { this._toast("Pick who the chore is for"); return false; }
-      for (const p of kids) await this._svc("todo", "add_item", { item: summary, description }, { entity_id: p.chores });
+    const kids = this._people.filter((x) => x.chores && f.kids.includes(x.name));
+    if (!kids.length) { this._toast("Pick who the chore is for"); return false; }
+    // Editing keeps the item for its kid if still picked; other picked kids get a copy.
+    // Reassigning adds the copies first, then removes the original, so a failed add loses nothing.
+    const owner = f.uid && this._people.find((x) => x.name === f.person);
+    for (const p of kids) {
+      if (p === owner) await this._svc("todo", "update_item", { item: f.uid, rename: summary, description }, { entity_id: p.chores });
+      else await this._svc("todo", "add_item", { item: summary, description }, { entity_id: p.chores });
     }
+    if (owner && !kids.includes(owner)) await this._svc("todo", "remove_item", { item: f.uid }, { entity_id: owner.chores });
     return true;
   }
 
@@ -896,8 +898,7 @@ class SkyFamCard extends HTMLElement {
         <div class="row"><input class="in emoji" name="emoji" value="${esc(m.emoji || "")}" placeholder="🙂"><input class="in" name="name" value="${esc(m.name || "")}" placeholder="Chore name, like Feed the dog"></div>
         <div class="emojis">${CHORE_EMOJI.map((e) => `<button data-act="emoji-pick" data-e="${e}">${e}</button>`).join("")}</div>
         <div class="lbl">For</div>
-        <div class="who">${m.uid ? `<span class="whochip" style="--c:${(kids.find((k) => k.name === m.person) || {}).color}"><span class="sel">${esc(m.person)}</span></span>`
-          : kids.map((k) => `<label class="whochip" style="--c:${k.color}"><input type="checkbox" name="kid" value="${esc(k.name)}" ${m.kids.includes(k.name) ? "checked" : ""}><span>${esc(k.name)}</span></label>`).join("")}</div>
+        <div class="who">${kids.map((k) => `<label class="whochip" style="--c:${k.color}"><input type="checkbox" name="kid" value="${esc(k.name)}" ${m.kids.includes(k.name) ? "checked" : ""}><span>${esc(k.name)}</span></label>`).join("")}</div>
         <div class="lbl">When</div>
         <div class="who">${PERIODS.map((per) => `<label class="whochip" style="--c:var(--accent)"><input type="radio" name="period" value="${per.id}" ${m.period === per.id ? "checked" : ""}><span>${per.icon} ${per.label}</span></label>`).join("")}</div>
         <div class="lbl">Days <small>(none picked = every day)</small></div>
@@ -1049,7 +1050,7 @@ class SkyFamCard extends HTMLElement {
         const f = { uid: this._modal.uid, person: this._modal.person, emoji: val("emoji"), name: val("name"), period: val("period") || "anytime",
           stars: Number(val("stars")) || 0, date: val("date"), days: [...mod.querySelectorAll('[name="day"]:checked')].map((x) => Number(x.value)), kids: [...mod.querySelectorAll('[name="kid"]:checked')].map((x) => x.value) };
         el.disabled = true;
-        this._saveChore(f).then((ok) => { if (ok) { this._closeModal(); this._toast(f.uid ? "Chore updated ✓" : "Chore added ✓"); } else el.disabled = false; }).catch(() => (el.disabled = false));
+        this._saveChore(f).then((ok) => { if (ok) { this._closeModal(); this._toast(!f.uid ? "Chore added ✓" : f.kids.includes(f.person) ? "Chore updated ✓" : `Chore moved to ${f.kids.join(" and ")} ✓`); } else el.disabled = false; }).catch(() => (el.disabled = false));
         break;
       }
       case "chore-del": {
@@ -1337,7 +1338,6 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .lbl { font-weight:800; color:var(--mute); font-size:13px; text-transform:uppercase; letter-spacing:.06em; margin-top:4px; }
 .in.emoji { width:72px; flex:none; text-align:center; font-size:24px; padding:8px; }
 .emojis { display:flex; flex-wrap:wrap; gap:2px; } .emojis button { font-size:24px; padding:4px 6px; border-radius:10px; } .emojis button:hover { background:var(--line); }
-.whochip .sel { display:block; padding:8px 14px; border-radius:999px; background:var(--c); color:#fff; font-weight:800; }
 .in.cost { width:90px; text-align:center; font-size:20px; } .star-lbl { font-weight:800; color:#b88400; } .btn.step { font-size:22px; padding:8px 18px; }
 .rw-list { display:flex; flex-direction:column; gap:8px; }
 .rw-row { display:flex; align-items:center; gap:12px; padding:12px 14px; background:var(--bg); border-radius:16px; font-weight:800; font-size:17px; }
