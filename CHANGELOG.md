@@ -2,6 +2,16 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.10.0: Setup buttons, edit and delete events, repeating events
+Commit `5dfdcbf`
+
+- **Setup from the card editor** (admins): each person without a chore list or star counter gets a **✨ Create a chore list and star counter** button. **Chores and rewards** has **✨ Create rewards lists** and **🌙 Create the nightly chore reset**. They create the Local To-do lists, counters (step 1, minimum 0) and the reset automation, and fill them in. Press the reset button again after adding a kid.
+- **Edit and delete events** from the event details. Repeating events offer this one, or this one and every later one. The buttons only show when the calendar supports them.
+- **Repeating events**: new events can repeat every day, week, 2 weeks, month or year, on chosen weekdays, until an optional date. The details show the rule in words.
+- **Notes** on new and edited events.
+- **Same event, two calendars**: an event with the same title, times and location on two people's calendars shows once, in both colors and both Planner columns. Edits and deletes apply to every copy.
+- Events are now created with the calendar websocket API instead of `calendar.create_event`, with times in the screen's time zone.
+
 ## v0.9.1: Move chores between kids
 Commit `0e1ec15`
 
