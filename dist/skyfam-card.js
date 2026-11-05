@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.10.0";
+const SKYFAM_VERSION = "0.10.1";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -130,7 +130,8 @@ class SkyFamCard extends HTMLElement {
       ...config,
     };
     this._people = config.people.map((p, i) => norm(p, i, false));
-    this._shared = (config.shared || []).map((p, i) => norm(p, i + this._people.length, true));
+    // a shared entry with no calendar (left over from "Add shared calendar") has nothing to show or save to
+    this._shared = (config.shared || []).map((p, i) => norm(p, i + this._people.length, true)).filter((o) => o.calendars.length);
     this._lists = (config.lists || []).map((l) => (typeof l === "string" ? { entity: l } : l));
     this._calOwners = {};
     [...this._people, ...this._shared].forEach((o) => o.calendars.forEach((c) => (this._calOwners[c] = o)));
@@ -454,19 +455,27 @@ class SkyFamCard extends HTMLElement {
   }
   _calChanged() { this._events = {}; this._render(); }
 
-  async _createEvent(f) {
-    const owner = [...this._people, ...this._shared].find((o) => o.key === f.who);
-    if (!owner || !f.title.trim()) { this._toast("Add a title and pick who it's for"); return false; }
-    // the websocket API, unlike the calendar.create_event action, takes a repeat rule
-    await this._ws({ type: "calendar/event/create", entity_id: this._addCal(owner), event: this._evData(f, owner, buildRrule(f)) });
-    this._calChanged();
+  // One event per calendar the chosen people add to; copies on different calendars then show as one event.
+  // made: calendars already saved to, so a retry after a failure doesn't add them twice
+  async _createEvent(f, made) {
+    const owners = [...this._people, ...this._shared].filter((o) => f.who.includes(o.key));
+    if (!owners.length || !f.title.trim()) { this._toast("Add a title and pick who it's for"); return false; }
+    try {
+      for (const owner of owners) {
+        const cal = this._addCal(owner);
+        if (made.has(cal)) continue;
+        // the websocket API, unlike the calendar.create_event action, takes a repeat rule
+        await this._ws({ type: "calendar/event/create", entity_id: cal, event: this._evData(f, owner, buildRrule(f)) });
+        made.add(cal);
+      }
+    } finally { this._calChanged(); }
     return true;
   }
 
   // scope: undefined for a one-time event, "one" or "future" for a repeating one
   async _updateEvent(e, f, scope) {
     if (!f.title.trim()) { this._toast("Add a title"); return false; }
-    const chosen = [...this._people, ...this._shared].find((o) => o.key === f.who);
+    const chosen = [...this._people, ...this._shared].find((o) => o.key === f.who[0]);
     try {
       for (const x of e.sources) {
         const owner = e.sources.length > 1 ? x.owner : chosen || x.owner;
@@ -970,7 +979,7 @@ class SkyFamCard extends HTMLElement {
         : `<button class="btn primary" data-act="save-event">Save</button>`;
       inner = `<h2>${e ? "Edit event" : "New event"}</h2>
         <input class="in" name="title" placeholder="What's happening?" data-keep="m-title" value="${esc(e ? e.title : "")}">
-        <div class="who">${who.map((o) => `<label class="whochip" style="--c:${o.color}"><input type="radio" name="who" value="${esc(o.key)}" ${o.key === m.who ? "checked" : ""}><span>${esc(o.name)}</span></label>`).join("")}</div>
+        <div class="who">${who.map((o) => `<label class="whochip" style="--c:${o.color}"><input type="${e ? "radio" : "checkbox"}" name="who" value="${esc(o.key)}" ${o.key === m.who ? "checked" : ""}><span>${esc(o.name)}</span></label>`).join("")}</div>
         <div class="row"><input class="in" type="date" name="date" value="${m.date}"><label class="cb"><input type="checkbox" name="allDay" ${m.allDay ? "checked" : ""}> All day</label></div>
         <div class="row times"><input class="in" type="time" name="start" value="${m.start}"><span>to</span><input class="in" type="time" name="end" value="${m.end}"></div>
         ${rec ? "" : `<select class="in" name="repeat">${REPEATS.map((r) => `<option value="${r.v}">${r.label}</option>`).join("")}</select>
@@ -1087,15 +1096,14 @@ class SkyFamCard extends HTMLElement {
       case "save-event": {
         const mod = this.shadowRoot.querySelector(".modal");
         const q = (n) => mod.querySelector(`[name="${n}"]`);
-        const who = mod.querySelector('[name="who"]:checked');
         const m = this._modal;
-        const f = { title: q("title").value, who: who ? who.value : "", date: q("date").value, allDay: q("allDay").checked, start: q("start").value, end: q("end").value,
+        const f = { title: q("title").value, who: [...mod.querySelectorAll('[name="who"]:checked')].map((x) => x.value), date: q("date").value, allDay: q("allDay").checked, start: q("start").value, end: q("end").value,
           location: q("location").value.trim(), description: q("description").value.trim(), span: m.span || 0,
           repeat: q("repeat") ? q("repeat").value : "", days: [...mod.querySelectorAll('[name="rday"]:checked')].map((x) => Number(x.value)), until: q("until") ? q("until").value : "" };
         if (!f.allDay && !f.span && f.end <= f.start) { this._toast("End time must be after start"); break; }
         if (f.until && f.until < f.date) { this._toast("Repeat until must be after the start"); break; }
         mod.querySelectorAll("[data-act=save-event]").forEach((b) => (b.disabled = true));
-        const done = m.edit ? this._updateEvent(m.edit, f, el.dataset.scope) : this._createEvent(f);
+        const done = m.edit ? this._updateEvent(m.edit, f, el.dataset.scope) : this._createEvent(f, m.made = m.made || new Set());
         done.then((ok) => { if (ok) { this._closeModal(); this._toast(m.edit ? "Event saved ✓" : "Event added ✓"); } else throw 0; })
           .catch(() => mod.querySelectorAll("[data-act=save-event]").forEach((b) => (b.disabled = false)));
         break;

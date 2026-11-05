@@ -21,7 +21,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Today**: schedule for today and the next two days, each kid's chore progress, and your first list. Events that have ended are greyed out, or hidden with `today_past_events: hide`. With `event_weather: true` each event shows the forecast for its time.
 - **Planner**: today as an hourly timeline with a column for each person (plus one for shared calendars), an all-day row, and a red line at the current time. Tap an empty slot to add an event for that person at that hour. Opens scrolled to now.
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
-- **Events**: tap one for details, then **Edit** or **Delete**. For a repeating event you choose this one or this one and every later one. New events can repeat (every day, week, 2 weeks, month or year, on chosen weekdays, until a date) and take notes. Edit and Delete only show when the calendar supports them (Local Calendar and Google do; CalDAV may not).
+- **Events**: tap one for details, then **Edit** or **Delete**. For a repeating event you choose this one or this one and every later one. New events can be for more than one person (tick several; each gets a copy on their calendar, shown as one event) and can repeat (every day, week, 2 weeks, month or year, on chosen weekdays, until a date) and take notes. Edit and Delete only show when the calendar supports them (Local Calendar and Google do; CalDAV may not).
 - **Same event, two calendars**: an event with the same title, times and location on two people's calendars shows once, in both colors and in both Planner columns. Edits and deletes apply to every copy.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card. To move a chore to another kid, edit it and change who it's for; tick more than one kid to copy it.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
@@ -59,7 +59,7 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 ### Manual
 
 1. Copy `dist/skyfam-card.js` to `/config/www/skyfam-card.js`.
-2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.10.0` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/skyfam-card.js?v=0.10.1` as a **JavaScript module**. When you replace the file, change `?v=` to the new version so browsers don't keep the old copy.
 
 ## Setup
 

@@ -57,7 +57,10 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   await c().locator(".fab[data-act=add-event]").click(); await pg.waitForTimeout(200);
   ok(!(await modal().locator(".rr-more").isVisible()), "repeat options hidden until a repeat is picked");
   await modal().locator("[name=title]").fill("Swim");
+  // pick two kids instead of the default (Family)
+  await modal().locator(".whochip", { hasText: "Family" }).click();
   await modal().locator(".whochip", { hasText: "Leo" }).click();
+  await modal().locator(".whochip", { hasText: "Mia" }).click();
   await modal().locator("[name=repeat]").selectOption("WEEKLY");
   ok(await modal().locator(".rr-days").isVisible(), "weekly shows day picker");
   const wd = new Date().getDay(), other = (wd + 2) % 7;
@@ -67,11 +70,19 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   await modal().locator("[name=description]").fill("Towel!");
   await shot("4-new-repeat");
   await modal().locator("[data-act=save-event]").click(); await pg.waitForTimeout(400);
-  const cr = ws("calendar/event/create").pop();
+  const crs = ws("calendar/event/create"), cr = crs[crs.length - 1];
+  ok(crs.length === 2 && crs[0].entity_id === "calendar.mia" && crs[0].event.summary === "[Mia] - Swim", "two people: one event on each calendar");
   const days = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
   ok(cr && cr.entity_id === "calendar.leo" && cr.event.summary === "[Leo] - Swim", "created on Leo's calendar with prefix");
   ok(cr.event.rrule.startsWith("FREQ=WEEKLY;BYDAY=") && cr.event.rrule.includes(days[wd]) && cr.event.rrule.includes(days[other]) && /;UNTIL=\d{8}T\d{6}Z$/.test(cr.event.rrule), "weekly rule with days and UTC until: " + cr.event.rrule);
   ok(cr.event.description === "Towel!", "notes saved on create");
+  ok((await c().locator(".agenda:has-text('Swim')").count()) === 1 && (await c().locator(".agenda:has-text('Swim') .a-who").count()) === 2, "the two copies show as one event for both kids");
+
+  // a shared entry with no calendar is left out
+  await pg.evaluate(() => window.card.setConfig({ ...window.card._config, shared: [...window.card._config.shared, { name: "Family", color: "#ff8a65" }] }));
+  await c().locator(".fab[data-act=add-event]").click(); await pg.waitForTimeout(200);
+  ok((await modal().locator(".whochip", { hasText: "Family" }).count()) === 1, "empty shared entry not offered");
+  await modal().locator("[data-act=close]").first().click();
 
   // all-day multi-day event keeps its length when edited
   await c().locator(".nav[data-v=week]").click(); await pg.waitForTimeout(400);
