@@ -2,6 +2,11 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.9.1: Move chores between kids
+Commit `0e1ec15`
+
+- Editing a chore now lets you change who it's for. Untick the kid and tick another to move it; tick extra kids to copy it to them. The copy is added before the original is removed, so a failed save loses nothing.
+
 ## v0.9.0: One-off chores, Today options, tab order
 Commit `1c2de42`
 
