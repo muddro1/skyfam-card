@@ -2,6 +2,12 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.10.1: Events for more than one person
+Commit `cfb4b9a`
+
+- A new event can be for several people: tick more than one. Each gets a copy on their calendar, and the copies show as one event in everyone's colors. If saving stops partway, trying again skips the calendars already saved.
+- A shared calendar entry with no calendar (left over from **＋ Add shared calendar**) no longer shows as an extra chip. Remove it in the editor: it's marked "No calendar".
+
 ## v0.10.0: Setup buttons, edit and delete events, repeating events
 Commit `5dfdcbf`
 
