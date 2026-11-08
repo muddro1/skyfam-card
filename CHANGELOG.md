@@ -2,6 +2,11 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.11.0: Drag to reorder chores
+Commit `7319602`
+
+- **Reorder chores**: in **✏️ Edit chores**, drag a chore by its ⠿ grip to move it up or down within its time of day. Works with touch. The order is saved to the to-do list, so every screen (and Today) shows it. To move a chore to another time of day, edit it.
+
 ## v0.10.1: Events for more than one person
 Commit `cfb4b9a`
 
