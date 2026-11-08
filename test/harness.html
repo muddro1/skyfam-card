@@ -51,6 +51,7 @@ const mkHass = () => ({
   // calendar create / update / delete; changes EV so the card's refetch shows them
   callWS: async (msg) => {
     console.log("WS", JSON.stringify(msg));
+    if (msg.type === "todo/item/move") { const l = todos[msg.entity_id], [it] = l.splice(l.findIndex((i) => i.uid === msg.uid), 1); l.splice(msg.previous_uid ? l.findIndex((i) => i.uid === msg.previous_uid) + 1 : 0, 0, it); subs[msg.entity_id]({ items: l.map((x) => ({ ...x })) }); return null; }
     const toEv = (uid, e) => ({ uid, summary:e.summary, location:e.location, description:e.description, rrule:e.rrule,
       start: e.dtstart.length === 10 ? { date:e.dtstart } : { dateTime:e.dtstart }, end: e.dtend.length === 10 ? { date:e.dtend } : { dateTime:e.dtend } });
     const list = EV[msg.entity_id] = EV[msg.entity_id] || [];

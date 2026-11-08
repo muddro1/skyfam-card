@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.10.1";
+const SKYFAM_VERSION = "0.11.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -602,6 +602,46 @@ class SkyFamCard extends HTMLElement {
       }
     });
     root.addEventListener("pointerdown", () => (this._lastTouch = Date.now()), { passive: true });
+    root.addEventListener("pointerdown", (e) => this._dragStart(e));
+  }
+
+  // Edit mode: drag a chore by its grip to reorder it within its time-of-day group.
+  _dragStart(e) {
+    const grip = e.target.closest && e.target.closest("[data-grip]");
+    if (!grip) return;
+    e.preventDefault();
+    const row = grip.closest(".chore"), group = row.parentElement;
+    row.classList.add("dragging");
+    this._drag = true;
+    const move = (ev) => {
+      const over = [...group.querySelectorAll(".chore")].find((r) => r !== row && (() => { const b = r.getBoundingClientRect(); return ev.clientY > b.top && ev.clientY < b.bottom; })());
+      if (over) over.getBoundingClientRect().top < row.getBoundingClientRect().top ? over.before(row) : over.after(row);
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end);
+      row.classList.remove("dragging");
+      // the click that follows pointerup would open the chore form
+      const stop = (ev) => ev.stopPropagation(); this.shadowRoot.addEventListener("click", stop, { capture: true, once: true }); setTimeout(() => this.shadowRoot.removeEventListener("click", stop, { capture: true }), 0);
+      this._drag = false;
+      this._moveChore(row.dataset.p, row.dataset.uid, row.nextElementSibling && row.nextElementSibling.dataset.uid, row.previousElementSibling && row.previousElementSibling.dataset.uid).catch(() => {}).finally(() => { if (this._dirty) { this._dirty = false; this._render(); } });
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", end); window.addEventListener("pointercancel", end);
+  }
+
+  // Puts uid right after prevUid, or right before nextUid when it's first in its group. Only the list order changes.
+  async _moveChore(name, uid, nextUid, prevUid) {
+    const p = this._people.find((x) => x.name === name);
+    const raw = p && this._todos[p.chores];
+    if (!raw) return;
+    const old = raw.findIndex((i) => i.uid === uid);
+    if (old < 0) return;
+    const [it] = raw.splice(old, 1);
+    const at = prevUid ? raw.findIndex((i) => i.uid === prevUid) + 1 : nextUid ? raw.findIndex((i) => i.uid === nextUid) : old;
+    raw.splice(at, 0, it);
+    if (at === old) return;
+    this._dirty = true;
+    try { await this._ws({ type: "todo/item/move", entity_id: p.chores, uid, ...(at > 0 ? { previous_uid: raw[at - 1].uid } : {}) }); }
+    catch (e) { raw.splice(at, 1); raw.splice(old, 0, it); throw e; }
   }
 
   _icon(n) {
@@ -639,6 +679,7 @@ class SkyFamCard extends HTMLElement {
 
   _render() {
     if (!this._built || !this._hass) return;
+    if (this._drag) { this._dirty = true; return; } // re-rendering mid-drag would drop the dragged row
     const root = this.shadowRoot;
     // keep focused input across re-render
     const act = root.activeElement;
@@ -903,7 +944,7 @@ class SkyFamCard extends HTMLElement {
         if (!g.length) return "";
         return `<div class="per"><h4>${per.icon} ${per.label}</h4>${g.map((i) => `
           <button class="chore ${i.done ? "done" : ""} ${i.today ? "" : "offday"}" data-act="${ed ? "chore-open" : "chore"}" data-p="${esc(p.name)}" data-uid="${esc(i.uid)}">
-            <span class="chk">${i.done ? "✓" : ""}</span><span class="ct">${esc(i.summary)}</span>${ed && (i.dates || i.days) ? `<span class="cd">${i.dates ? dateLabel(i.dates) : dayLabel(i.days)}</span>` : ""}${i.stars ? `<span class="cs">${i.stars}⭐</span>` : ""}${ed ? `<span class="pen">✏️</span>` : ""}</button>`).join("")}</div>`;
+            ${ed ? `<span class="grip" data-grip title="Drag to reorder">⠿</span>` : ""}<span class="chk">${i.done ? "✓" : ""}</span><span class="ct">${esc(i.summary)}</span>${ed && (i.dates || i.days) ? `<span class="cd">${i.dates ? dateLabel(i.dates) : dayLabel(i.days)}</span>` : ""}${i.stars ? `<span class="cs">${i.stars}⭐</span>` : ""}${ed ? `<span class="pen">✏️</span>` : ""}</button>`).join("")}</div>`;
       }).join("");
       const stars = p.stars && this._hass.states[p.stars];
       return `<div class="kid card" style="--c:${p.color}">
@@ -1482,6 +1523,8 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
 .btn.on { background:var(--accent); color:#fff; } .btn.danger { background:#f8dcd8; color:#a3271b; } .grow { flex:1; }
 .chores.editing .chore { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 45%, transparent); }
 .pen { font-size:18px; opacity:.7; }
+.grip { font-size:22px; color:var(--mute); cursor:grab; touch-action:none; padding:4px 2px; margin:-4px 0; }
+.chore.dragging { opacity:.85; transform:scale(1.03); box-shadow:0 6px 18px rgba(0,0,0,.18); z-index:1; position:relative; }
 .addrow { width:100%; text-align:center; padding:14px; border-radius:18px; border:2px dashed color-mix(in srgb, var(--c) 55%, transparent); color:var(--mute); font-weight:800; font-size:16px; margin-top:4px; }
 .lbl { font-weight:800; color:var(--mute); font-size:13px; text-transform:uppercase; letter-spacing:.06em; margin-top:4px; }
 .in.emoji { width:72px; flex:none; text-align:center; font-size:24px; padding:8px; }
