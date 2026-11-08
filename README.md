@@ -210,3 +210,7 @@ node today-options-test.js shots-to   # hiding past events, event weather, tab o
 ```
 
 Calendar events are read through `GET /api/calendars/<entity>`; to-do lists and the forecast through websocket subscriptions (`todo/item/subscribe`, `weather/subscribe_forecast`).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
