@@ -31,6 +31,13 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   await cfg({ tabs: [] }); await pg.waitForTimeout(200);
   assert.equal(await c().locator(".rail .nav").count(), 6, "empty tabs shows all");
   await shot("2-tabs"); console.log("PASS tabs");
+  // header_buttons: own shortcut links next to the theme button; javascript: links are dropped
+  await cfg({ tabs: [], header_buttons: [{ name: "Camera", icon: "📷", url: "ks://camera" }, { url: "javascript:alert(1)" }, { name: "No link" }] }); await pg.waitForTimeout(200);
+  const hb = c().locator(".top a.hbtn");
+  assert.equal(await hb.count(), 1, "only the valid button renders");
+  assert.equal(await hb.getAttribute("href"), "ks://camera");
+  assert.equal((await hb.innerText()).replace(/\s+/g, " ").trim(), "📷 Camera");
+  await shot("3-header-button"); console.log("PASS header buttons");
  } catch (e) { console.log("FAIL", e.message); process.exitCode = 1; }
  const errs = logs.filter(l => l.startsWith("PAGEERROR")); if (errs.length) { console.log(errs.join("\n")); process.exitCode = 1; }
  await b.close(); srv.close();});

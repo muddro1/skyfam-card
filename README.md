@@ -77,7 +77,7 @@ To do it by hand instead:
 
 Everything below can be set from the card's **Edit** screen instead of YAML:
 
-- **General**: title, weather, which view to start on, default theme, first day of the week, idle timeout, tab order (drag to reorder, untick to hide), past events and event weather on Today.
+- **General**: title, weather, which view to start on, default theme, first day of the week, idle timeout, tab order (drag to reorder, untick to hide), past events and event weather on Today, and header buttons.
 - **People**: one row per person with a color picker, calendars, the calendar new events go to, home/away person, chore list, star counter and the "[Name] - Event" title option. Reorder with the arrows; the remove button asks once before deleting.
 - **Shared calendars**: family, birthdays, trash day and so on, with a read-only switch.
 - **Lists**, **Chores and rewards** (rewards list, parent PIN), **Planner** hours and **Advanced** layout.
@@ -150,6 +150,7 @@ rewards_owed_list: todo.skyfam_rewards_owed
 | `tabs` | all, in the default order | Tabs to show, in order, e.g. `[today, chores, week, month, planner, lists]`. Tabs left out are hidden. If the start view's tab is hidden, the card starts on the first tab. |
 | `today_past_events` | `dim` | `dim` greys out today's events once they end; `hide` removes them. |
 | `event_weather` | `false` | Show the forecast (icon and temperature) on each event on Today. Uses the weather entity's hourly forecast near the event's start, or the day's forecast for all-day events and when there's no hourly one. |
+| `header_buttons` | none | Your own shortcut buttons next to the theme button, as `name`, `icon` (an emoji or `mdi:` icon) and `url`. The link opens when tapped, so it can be a web page or an app link, e.g. `ks://camera` opens [Kiosk Satellite](https://kiosksatellite.com/docs/dashboard-links/)'s camera view (`ks://camera/front-door` for a named view). |
 | `default_view` | `today` | `today`, `planner`, `week`, `month`, `chores` or `lists`. |
 | `planner_start_hour` | `6` | First hour shown in Planner. |
 | `planner_end_hour` | `22` | Last hour shown in Planner. |

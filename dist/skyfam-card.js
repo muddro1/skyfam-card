@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0-beta.1";
+const SKYFAM_VERSION = "0.12.0-beta.2";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -644,6 +644,15 @@ class SkyFamCard extends HTMLElement {
     catch (e) { raw.splice(at, 1); raw.splice(old, 0, it); throw e; }
   }
 
+  // Your own header shortcuts: header_buttons: [{ name, icon, url }]. The url can be any link, e.g. ks://camera for Kiosk Satellite.
+  _headerButtons() {
+    return (this._config.header_buttons || []).filter((b) => b && b.url && !/^\s*javascript:/i.test(b.url)).map((b) => {
+      const ic = b.icon || "🔗";
+      const icon = ic.startsWith("mdi:") ? (customElements.get("ha-icon") ? `<ha-icon icon="${esc(ic)}"></ha-icon>` : "🔗") : esc(ic);
+      return `<a class="themebtn hbtn" href="${esc(b.url)}" title="${esc(b.name || b.url)}">${icon}${b.name ? `<span>${esc(b.name)}</span>` : ""}</a>`;
+    }).join("");
+  }
+
   _icon(n) {
     return customElements.get("ha-icon") ? `<ha-icon icon="${n.mdi}"></ha-icon>` : `<span class="emo">${n.emoji}</span>`;
   }
@@ -726,7 +735,7 @@ class SkyFamCard extends HTMLElement {
     const themeBtn = `<button class="themebtn" data-act="theme" title="Theme: ${tm.label}">${tm.icon}<span>${tm.label}</span></button>`;
     return `<div class="when"><div class="clock"></div><div class="date">${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</div></div>
       ${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ""}
-      ${weather}${themeBtn}
+      ${weather}${themeBtn}${this._headerButtons()}
       <div class="chips">${["today", "planner", "week", "month"].includes(this._view) ? chips : ""}</div>`;
   }
 
@@ -1496,6 +1505,7 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
 /* theme button */
 .themebtn { display:flex; align-items:center; gap:6px; background:var(--card); border-radius:999px; padding:8px 14px; font-weight:800; font-size:14px; color:var(--mute); box-shadow:0 1px 3px rgba(0,0,0,.05); }
 .themebtn { font-size:18px; } .themebtn span { font-size:13px; }
+.hbtn { text-decoration:none; } .hbtn ha-icon { --mdc-icon-size:20px; }
 
 /* planner */
 .v-planner { display:flex; flex-direction:column; padding-bottom:16px; }
@@ -1593,7 +1603,7 @@ const ED_LABELS = {
   entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", parent_pin: "Parent PIN",
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
-  height_offset: "Height offset", tabs: "Tabs", today_past_events: "Past events on Today", event_weather: "Show the forecast on Today's events",
+  height_offset: "Height offset", tabs: "Tabs", header_buttons: "Header buttons", today_past_events: "Past events on Today", event_weather: "Show the forecast on Today's events",
 };
 const ED_HELP = {
   idle_return_minutes: "0 turns this off",
@@ -1611,6 +1621,7 @@ const ED_HELP = {
   height_offset: "Leave blank to size automatically",
   theme: "Each screen can still switch with the header button",
   tabs: "Drag to reorder. Untick a tab to hide it",
+  header_buttons: "Your own shortcuts next to the theme button: a name, an icon (emoji or mdi:) and a link, e.g. ks://camera to open Kiosk Satellite's camera view",
   event_weather: "Uses the weather entity's hourly forecast, or the daily one when there's no hourly",
 };
 
@@ -1630,6 +1641,11 @@ const ED_SCHEMA = {
       { name: "today_past_events", selector: edSelect([{ value: "dim", label: "Greyed out" }, { value: "hide", label: "Hidden" }]) },
       { name: "event_weather", selector: { boolean: {} } },
     ] },
+    { name: "header_buttons", selector: { object: { multiple: true, label_field: "name", fields: {
+      name: { label: "Name", selector: { text: {} } },
+      icon: { label: "Icon (emoji or mdi:...)", selector: { text: {} } },
+      url: { label: "Link", required: true, selector: { text: {} } },
+    } } } },
   ],
   person: [
     { type: "grid", name: "", schema: [{ name: "name", required: true, selector: { text: {} } }, { name: "initials", selector: { text: {} } }] },
@@ -1666,7 +1682,7 @@ const ED_SCHEMA = {
   advanced: [{ name: "height_offset", selector: edNum(0, 400, "px") }],
 };
 
-const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "people", "shared", "lists",
+const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "header_buttons", "people", "shared", "lists",
   "rewards_list", "rewards_owed_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
 const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity", "today"];
 
@@ -1891,13 +1907,14 @@ class SkyFamCardEditor extends HTMLElement {
 
     this._form(slot("general"), ED_SCHEMA.general,
       () => (c = this._config, { title: c.title, weather_entity: c.weather_entity, default_view: c.default_view || "today", theme: c.theme || "light", first_day: String(c.first_day ?? 0), idle_return_minutes: c.idle_return_minutes ?? 3, hide_pictures: !!c.hide_pictures,
-        tabs: c.tabs && c.tabs.length ? c.tabs : NAV.map((n) => n.id), today_past_events: c.today_past_events || "dim", event_weather: !!c.event_weather }),
+        tabs: c.tabs && c.tabs.length ? c.tabs : NAV.map((n) => n.id), today_past_events: c.today_past_events || "dim", event_weather: !!c.event_weather, header_buttons: c.header_buttons || [] }),
       (v) => {
         set({ ...v, first_day: Number(v.first_day) || 0 });
         if (this._config.default_view === "today") delete this._config.default_view;
         if (this._config.theme === "light") delete this._config.theme;
         if (!this._config.first_day) delete this._config.first_day;
         if (this._config.today_past_events === "dim") delete this._config.today_past_events;
+        if (!(this._config.header_buttons || []).length) delete this._config.header_buttons;
         if (!this._config.tabs || !this._config.tabs.length || this._config.tabs.join() === NAV.map((n) => n.id).join()) delete this._config.tabs;
       });
     this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
