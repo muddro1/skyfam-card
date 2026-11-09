@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0";
+const SKYFAM_VERSION = "0.11.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -774,10 +774,7 @@ class SkyFamCard extends HTMLElement {
     const flagged = this._lists.filter((l) => l.today);
     const todayLists = flagged.length ? flagged : this._lists.slice(0, 1);
     const limit = todayLists.length > 1 ? Number(this._config.today_list_items) || 5 : 0;
-    const days = this._forecast.slice(0, 7);
-    const strip = days.length ? `<div class="fc-strip card">${days.map((f) => { const d = new Date(f.datetime);
-      return `<div class="fc-day ${sameDay(d, now) ? "today" : ""}"><span class="fc-n">${sameDay(d, now) ? "Today" : d.toLocaleDateString([], { weekday: "short" })}</span><span class="fc-i">${WEATHER_ICON[f.condition] || "🌡️"}</span><span class="fc-t">${Math.round(f.temperature)}°${f.templow != null ? `<small>${Math.round(f.templow)}°</small>` : ""}</span></div>`; }).join("")}</div>` : "";
-    return `${strip}<div class="col sched card"><h2>Schedule</h2>${sched}</div>
+    return `<div class="col sched card"><h2>Schedule</h2>${sched}</div>
       <div class="col card"><h2 data-act="view" data-v="chores" class="link">Chores ›</h2>${chores || `<div class="empty small">No chore lists set up</div>`}</div>
       <div class="col lists-col">${todayLists.map((l) => `<div class="card ${limit ? "stacked" : ""}">${this._listPanel(l, true, limit)}</div>`).join("")}</div>`;
   }
@@ -1380,12 +1377,7 @@ h4 { margin:14px 0 8px; font-size:15px; color:var(--mute); font-weight:800; }
 .empty { color:var(--mute); padding:30px; text-align:center; font-weight:700; } .empty.small { padding:10px 4px; text-align:left; font-size:15px; }
 
 /* today */
-.v-today { display:grid; grid-template-columns: 1.35fr 1fr 1fr; grid-auto-rows:max-content; gap:18px; align-items:start; } /* max-content: auto rows squashed the forecast strip */
-.fc-strip { grid-column:1 / -1; display:flex; justify-content:space-between; gap:6px; padding:10px 16px; overflow-x:auto; }
-.fc-day { flex:1; min-width:58px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px; border-radius:14px; }
-.fc-day.today { background:color-mix(in srgb, var(--accent) 12%, transparent); }
-.fc-n { font-size:13px; font-weight:800; color:var(--mute); text-transform:uppercase; letter-spacing:.04em; } .fc-i { font-size:26px; line-height:1.2; }
-.fc-t { font-weight:800; font-size:17px; } .fc-t small { color:var(--mute); font-weight:700; font-size:13px; margin-left:5px; }
+.v-today { display:grid; grid-template-columns: 1.35fr 1fr 1fr; gap:18px; align-items:start; }
 .col { min-width:0; }
 .agenda { display:grid; grid-template-columns:74px 6px 1fr auto; align-items:center; gap:12px; width:100%; padding:10px 8px; border-radius:16px; }
 .agenda:hover { background:color-mix(in srgb, var(--c) 8%, transparent); }

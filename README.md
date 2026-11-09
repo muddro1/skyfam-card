@@ -18,7 +18,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 
 ## Views
 
-- **Today**: a 7-day forecast strip, the schedule for today and the next two days, each kid's chore progress, and your first list. Events that have ended are greyed out, or hidden with `today_past_events: hide`. With `event_weather: true` each event shows the forecast for its time.
+- **Today**: schedule for today and the next two days, each kid's chore progress, and your first list. Events that have ended are greyed out, or hidden with `today_past_events: hide`. With `event_weather: true` each event shows the forecast for its time.
 - **Planner**: today as an hourly timeline with a column for each person (plus one for shared calendars), an all-day row, and a red line at the current time. Tap an empty slot to add an event for that person at that hour. Opens scrolled to now.
 - **Week** and **Month**: events colored by person. Tap a person chip to hide or show their events. Tap an event for details, or **＋** to add one.
 - **Events**: tap one for details, then **Edit** or **Delete**. For a repeating event you choose this one or this one and every later one. New events can be for more than one person (tick several; each gets a copy on their calendar, shown as one event) and can repeat (every day, week, 2 weeks, month or year, on chosen weekdays, until a date) and take notes. Edit and Delete only show when the calendar supports them (Local Calendar and Google do; CalDAV may not).

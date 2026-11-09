@@ -2,12 +2,6 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
-## v0.12.0: Week forecast on Today
-Commit `9b98ebb`
-
-- **Week forecast on Today**: a strip across the top of Today shows the next 7 days from the weather entity's daily forecast: icon, high and low, with today highlighted. It scrolls sideways on phones and only shows when the weather entity has a daily forecast.
-- README screenshots updated to the current look (`npm run docs` regenerates them).
-
 ## v0.11.0: Drag to reorder chores
 Commit `7319602`
 
