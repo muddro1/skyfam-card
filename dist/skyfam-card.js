@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.11.0";
+const SKYFAM_VERSION = "0.12.0-beta.1";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -714,7 +714,10 @@ class SkyFamCard extends HTMLElement {
     const now = new Date();
     const w = this._config.weather_entity && this._hass.states[this._config.weather_entity];
     const today = this._forecast[0];
-    const weather = w ? `<div class="wx"><span class="wx-i">${WEATHER_ICON[w.state] || "🌡️"}</span><span class="wx-t">${Math.round(w.attributes.temperature)}°</span>${today ? `<span class="wx-hl">${Math.round(today.temperature)}° / ${Math.round(today.templow)}°</span>` : ""}</div>` : "";
+    // the next days after today; CSS hides some on narrower screens
+    const next = this._forecast.filter((f) => { const d = new Date(f.datetime); return d > now && !sameDay(d, now); }).slice(0, 5);
+    const weather = w ? `<div class="wx"><span class="wx-i">${WEATHER_ICON[w.state] || "🌡️"}</span><span class="wx-t">${Math.round(w.attributes.temperature)}°</span>${today ? `<span class="wx-hl">${Math.round(today.temperature)}° / ${Math.round(today.templow)}°</span>` : ""}${next.length ? `<span class="wx-days">${next.map((f) =>
+      `<span class="wx-d"><small>${new Date(f.datetime).toLocaleDateString([], { weekday: "short" })}</small>${WEATHER_ICON[f.condition] || "🌡️"} ${Math.round(f.temperature)}°</span>`).join("")}</span>` : ""}</div>` : "";
     const chips = [...this._people, ...this._shared].map((p) => {
       return `<button class="chip ${this._hidden.has(p.key) ? "off" : ""}" data-act="filter" data-k="${esc(p.key)}" style="--c:${p.color}">
         ${this._avatar(p)}${esc(p.name)}</button>`;
@@ -1362,6 +1365,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .title { font-size:22px; font-weight:800; }
 .wx { display:flex; align-items:center; gap:8px; background:var(--card); border-radius:18px; padding:8px 14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
 .wx-i { font-size:28px; } .wx-t { font-size:26px; font-weight:800; } .wx-hl { color:var(--mute); font-weight:700; font-size:14px; }
+.wx-days { display:flex; gap:14px; margin-left:6px; padding-left:14px; border-left:1px solid var(--line); }
+.wx-d { display:flex; flex-direction:column; align-items:center; font-weight:800; font-size:15px; white-space:nowrap; line-height:1.15; }
+.wx-d small { font-size:11px; color:var(--mute); text-transform:uppercase; letter-spacing:.04em; }
 .chips { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; }
 .chip { display:flex; align-items:center; gap:8px; padding:6px 14px 6px 6px; border-radius:999px; background:color-mix(in srgb, var(--c) 22%, var(--card)); font-weight:800; font-size:15px; transition:opacity .2s; }
 .chip.off { opacity:.35; filter:grayscale(.7); }
@@ -1548,12 +1554,14 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
 .waiting { background:color-mix(in srgb, #d9a400 14%, var(--card)); padding:10px 14px; border-radius:14px; font-weight:700 !important; }
 
 /* tablet portrait / small */
+@media (max-width: 1100px) { .wx-d:nth-child(n+4) { display:none; } }
+@media (max-width: 900px) { .wx-days { display:none; } }
 @media (max-width: 1100px) { .v-today { grid-template-columns:1fr 1fr; } .v-today .sched { grid-row: span 2; } }
 @media (max-width: 760px) {
   .app { grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) auto; }
   .rail { order:2; flex-direction:row; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); border-right:0; border-top:1px solid var(--line); }
   .nav { padding:6px 8px; font-size:11px; }
-  .title { display:none; }
+  .title { display:none; } .wx-days { display:none; }
   .top { padding:12px 14px 6px; gap:12px; } .clock { font-size:32px; } .chips { margin-left:0; width:100%; overflow-x:auto; flex-wrap:nowrap; }
   .chip { flex:none; }
   .body { padding:4px 12px 90px; }
