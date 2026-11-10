@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0-beta.3";
+const SKYFAM_VERSION = "0.12.0-beta.4";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -648,12 +648,14 @@ class SkyFamCard extends HTMLElement {
   // tap_action is a normal HA action (e.g. fire-dom-event for a browser_mod popup). show_on: phone | not_phone hides it on the other size.
   _headerButtons() {
     return (this._config.header_buttons || []).map((b, i) => {
-      if (!b || !(b.tap_action || (b.url && !/^\s*javascript:/i.test(b.url)))) return "";
+      // the editor saves tap_action { action: "none" } by default; that must not hide the link
+      const act = b && b.tap_action && b.tap_action.action && b.tap_action.action !== "none";
+      if (!b || !(act || (b.url && !/^\s*javascript:/i.test(b.url)))) return "";
       const ic = b.icon || "🔗";
       const icon = ic.startsWith("mdi:") ? (customElements.get("ha-icon") ? `<ha-icon icon="${esc(ic)}"></ha-icon>` : "🔗") : esc(ic);
       const cls = `themebtn hbtn${b.show_on === "phone" ? " phoneonly" : b.show_on === "not_phone" ? " nophone" : ""}`;
       const inner = `${icon}${b.name ? `<span>${esc(b.name)}</span>` : ""}`;
-      return b.tap_action ? `<button class="${cls}" data-act="hbtn" data-i="${i}" title="${esc(b.name || "")}">${inner}</button>`
+      return act ? `<button class="${cls}" data-act="hbtn" data-i="${i}" title="${esc(b.name || "")}">${inner}</button>`
         : `<a class="${cls}" href="${esc(b.url)}" title="${esc(b.name || b.url)}">${inner}</a>`;
     }).join("");
   }

@@ -49,6 +49,9 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   await c().locator(".top button.hbtn").click();
   assert.deepEqual(await pg.evaluate(() => window.__acts), [{ config: { tap_action: pop }, action: "tap" }], "tap fires hass-action");
   await pg.setViewportSize({ width: 1280, height: 800 });
+  // the editor's default tap_action { action: "none" } keeps the link
+  await cfg({ tabs: [], header_buttons: [{ name: "Camera", url: "ks://camera", tap_action: { action: "none" } }] }); await pg.waitForTimeout(200);
+  assert.equal(await c().locator(".top a.hbtn").getAttribute("href"), "ks://camera", "action none keeps the link");
   console.log("PASS header buttons");
  } catch (e) { console.log("FAIL", e.message); process.exitCode = 1; }
  const errs = logs.filter(l => l.startsWith("PAGEERROR")); if (errs.length) { console.log(errs.join("\n")); process.exitCode = 1; }
