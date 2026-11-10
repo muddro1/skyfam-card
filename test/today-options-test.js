@@ -37,7 +37,19 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   assert.equal(await hb.count(), 1, "only the valid button renders");
   assert.equal(await hb.getAttribute("href"), "ks://camera");
   assert.equal((await hb.innerText()).replace(/\s+/g, " ").trim(), "📷 Camera");
-  await shot("3-header-button"); console.log("PASS header buttons");
+  await shot("3-header-button");
+  // tap_action buttons fire HA's hass-action (e.g. a browser_mod popup); show_on hides a button on phones / non-phones
+  await pg.evaluate(() => { window.__acts = []; window.addEventListener("hass-action", (e) => window.__acts.push(e.detail)); });
+  const pop = { action: "fire-dom-event", browser_mod: { service: "browser_mod.popup", data: { title: "Front door" } } };
+  await cfg({ tabs: [], header_buttons: [{ name: "Camera", icon: "📷", url: "ks://camera", show_on: "not_phone" }, { name: "Door", icon: "🚪", tap_action: pop, show_on: "phone" }] }); await pg.waitForTimeout(200);
+  assert.ok(await c().locator(".top a.hbtn").isVisible(), "not_phone button shows on a wide screen");
+  assert.ok(!(await c().locator(".top button.hbtn").isVisible()), "phone-only button hidden on a wide screen");
+  await pg.setViewportSize({ width: 400, height: 800 }); await pg.waitForTimeout(200);
+  assert.ok(!(await c().locator(".top a.hbtn").isVisible()), "not_phone button hidden on a phone");
+  await c().locator(".top button.hbtn").click();
+  assert.deepEqual(await pg.evaluate(() => window.__acts), [{ config: { tap_action: pop }, action: "tap" }], "tap fires hass-action");
+  await pg.setViewportSize({ width: 1280, height: 800 });
+  console.log("PASS header buttons");
  } catch (e) { console.log("FAIL", e.message); process.exitCode = 1; }
  const errs = logs.filter(l => l.startsWith("PAGEERROR")); if (errs.length) { console.log(errs.join("\n")); process.exitCode = 1; }
  await b.close(); srv.close();});

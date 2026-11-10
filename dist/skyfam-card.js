@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0-beta.2";
+const SKYFAM_VERSION = "0.12.0-beta.3";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -644,12 +644,17 @@ class SkyFamCard extends HTMLElement {
     catch (e) { raw.splice(at, 1); raw.splice(old, 0, it); throw e; }
   }
 
-  // Your own header shortcuts: header_buttons: [{ name, icon, url }]. The url can be any link, e.g. ks://camera for Kiosk Satellite.
+  // Your own header shortcuts: header_buttons: [{ name, icon, url | tap_action, show_on }]. url can be any link, e.g. ks://camera for Kiosk Satellite;
+  // tap_action is a normal HA action (e.g. fire-dom-event for a browser_mod popup). show_on: phone | not_phone hides it on the other size.
   _headerButtons() {
-    return (this._config.header_buttons || []).filter((b) => b && b.url && !/^\s*javascript:/i.test(b.url)).map((b) => {
+    return (this._config.header_buttons || []).map((b, i) => {
+      if (!b || !(b.tap_action || (b.url && !/^\s*javascript:/i.test(b.url)))) return "";
       const ic = b.icon || "🔗";
       const icon = ic.startsWith("mdi:") ? (customElements.get("ha-icon") ? `<ha-icon icon="${esc(ic)}"></ha-icon>` : "🔗") : esc(ic);
-      return `<a class="themebtn hbtn" href="${esc(b.url)}" title="${esc(b.name || b.url)}">${icon}${b.name ? `<span>${esc(b.name)}</span>` : ""}</a>`;
+      const cls = `themebtn hbtn${b.show_on === "phone" ? " phoneonly" : b.show_on === "not_phone" ? " nophone" : ""}`;
+      const inner = `${icon}${b.name ? `<span>${esc(b.name)}</span>` : ""}`;
+      return b.tap_action ? `<button class="${cls}" data-act="hbtn" data-i="${i}" title="${esc(b.name || "")}">${inner}</button>`
+        : `<a class="${cls}" href="${esc(b.url)}" title="${esc(b.name || b.url)}">${inner}</a>`;
     }).join("");
   }
 
@@ -1122,6 +1127,11 @@ class SkyFamCard extends HTMLElement {
         this._render(); break;
       }
       case "today": this._anchor = startOfDay(new Date()); this._scrollNow = this._view === "planner"; this._render(); break;
+      case "hbtn": {
+        const b = this._config.header_buttons[el.dataset.i];
+        this.dispatchEvent(new CustomEvent("hass-action", { bubbles: true, composed: true, detail: { config: { tap_action: b.tap_action }, action: "tap" } }));
+        break;
+      }
       case "theme": {
         const i = THEMES.findIndex((t) => t.id === this._themeMode());
         const next = THEMES[(i + 1) % THEMES.length];
@@ -1567,6 +1577,8 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
 @media (max-width: 1100px) { .wx-d:nth-child(n+4) { display:none; } }
 @media (max-width: 900px) { .wx-days { display:none; } }
 @media (max-width: 1100px) { .v-today { grid-template-columns:1fr 1fr; } .v-today .sched { grid-row: span 2; } }
+@media (min-width: 761px) { .phoneonly { display:none; } }
+@media (max-width: 760px) { .nophone { display:none; } }
 @media (max-width: 760px) {
   .app { grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) auto; }
   .rail { order:2; flex-direction:row; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); border-right:0; border-top:1px solid var(--line); }
@@ -1621,7 +1633,7 @@ const ED_HELP = {
   height_offset: "Leave blank to size automatically",
   theme: "Each screen can still switch with the header button",
   tabs: "Drag to reorder. Untick a tab to hide it",
-  header_buttons: "Your own shortcuts next to the theme button: a name, an icon (emoji or mdi:) and a link, e.g. ks://camera to open Kiosk Satellite's camera view",
+  header_buttons: "Your own shortcuts next to the theme button: a name, an icon (emoji or mdi:), and a link (e.g. ks://camera for Kiosk Satellite) or a tap action (e.g. a browser_mod popup). Show on: hide it on phones or show it only on phones",
   event_weather: "Uses the weather entity's hourly forecast, or the daily one when there's no hourly",
 };
 
@@ -1644,7 +1656,9 @@ const ED_SCHEMA = {
     { name: "header_buttons", selector: { object: { multiple: true, label_field: "name", fields: {
       name: { label: "Name", selector: { text: {} } },
       icon: { label: "Icon (emoji or mdi:...)", selector: { text: {} } },
-      url: { label: "Link", required: true, selector: { text: {} } },
+      url: { label: "Link (or use a tap action)", selector: { text: {} } },
+      tap_action: { label: "Tap action (instead of a link)", selector: { ui_action: {} } },
+      show_on: { label: "Show on", selector: edSelect([{ value: "all", label: "All screens" }, { value: "not_phone", label: "Not on phones" }, { value: "phone", label: "Phones only" }]) },
     } } } },
   ],
   person: [

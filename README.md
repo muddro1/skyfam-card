@@ -150,7 +150,7 @@ rewards_owed_list: todo.skyfam_rewards_owed
 | `tabs` | all, in the default order | Tabs to show, in order, e.g. `[today, chores, week, month, planner, lists]`. Tabs left out are hidden. If the start view's tab is hidden, the card starts on the first tab. |
 | `today_past_events` | `dim` | `dim` greys out today's events once they end; `hide` removes them. |
 | `event_weather` | `false` | Show the forecast (icon and temperature) on each event on Today. Uses the weather entity's hourly forecast near the event's start, or the day's forecast for all-day events and when there's no hourly one. |
-| `header_buttons` | none | Your own shortcut buttons next to the theme button, as `name`, `icon` (an emoji or `mdi:` icon) and `url`. The link opens when tapped, so it can be a web page or an app link, e.g. `ks://camera` opens [Kiosk Satellite](https://kiosksatellite.com/docs/dashboard-links/)'s camera view (`ks://camera/front-door` for a named view). |
+| `header_buttons` | none | Your own shortcut buttons next to the theme button, as `name`, `icon` (an emoji or `mdi:` icon) and either a `url` or a `tap_action`. A `url` opens when tapped, so it can be a web page or an app link, e.g. `ks://camera` opens [Kiosk Satellite](https://kiosksatellite.com/docs/dashboard-links/)'s camera view (`ks://camera/front-door` for a named view). A `tap_action` is a normal Home Assistant action, e.g. a [browser_mod](https://github.com/thomasloven/hass-browser_mod) popup. `show_on: not_phone` or `show_on: phone` shows the button only on bigger screens or only on phones. |
 | `default_view` | `today` | `today`, `planner`, `week`, `month`, `chores` or `lists`. |
 | `planner_start_hour` | `6` | First hour shown in Planner. |
 | `planner_end_hour` | `22` | Last hour shown in Planner. |
