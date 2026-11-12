@@ -92,6 +92,7 @@ card.setConfig(window.SKYFAM_CONFIG || {
   lists: [ { entity:"todo.home", name:"Home" }, { entity:"todo.alex", name:"Alex's To-Do" } ],
   rewards_list: "todo.skyfam_rewards", rewards_owed_list: "todo.skyfam_rewards_owed", parent_pin: new URLSearchParams(location.search).get("pin") || undefined,
   rewards: [ {name:"15 min screen time", cost:5, icon:"📱"}, {name:"Pick the movie", cost:10, icon:"🎬"}, {name:"Pick dinner", cost:10, icon:"🍕"}, {name:"Ice cream", cost:15, icon:"🍦"} ],
+  demerits: [ {name:"Hitting", icon:"✋", stars:3}, {name:"Back talk", stars:1} ],
 });
 document.getElementById("wrap").appendChild(card);
 card.hass = hass = mkHass();

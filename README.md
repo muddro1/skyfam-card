@@ -25,7 +25,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Same event, two calendars**: an event with the same title, times and location on two people's calendars shows once, in both colors and in both Planner columns. Edits and deletes apply to every copy.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card. To move a chore to another kid, edit it and change who it's for; tick more than one kid to copy it.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
-- **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, or set an exact total (behind the parent PIN when one is set).
+- **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, tap a demerit (like "Hitting −3") or set an exact total (behind the parent PIN when one is set).
 - **Owed rewards**: every redeemed reward goes on an Owed list on the Chores tab until a parent taps **Given**. **↩** cancels it and gives the stars back. The kid's rewards screen shows what they're waiting on.
 - **Photos**: a person's Home Assistant photo replaces their initials on chips, Planner columns and chore rings.
 
@@ -158,6 +158,7 @@ rewards_owed_list: todo.skyfam_rewards_owed
 | `planner_shared_name` | first shared calendar's name | Title of the Planner column for shared calendars. |
 | `idle_return_minutes` | `3` | Return to the default view after this many idle minutes. `0` turns it off. |
 | `first_day` | `0` | First day of the week. |
+| `demerits` | none | Buttons on the **⭐ Adjust stars** screen that take stars away. Each takes `name`, `stars` and an optional `icon`, like `{ name: Hitting, icon: ✋, stars: 3 }`. |
 | `parent_pin` | none | Asks for this PIN before editing chores or rewards. Unlocks for 5 minutes. A soft lock for kids, not real security: anyone who can edit the dashboard can read it. |
 | `theme` | `light` | Starting theme: `light`, `dark`, `auto` (follows Home Assistant) or `sun` (dark after sunset). The header button overrides it per device. |
 | `height_offset` | auto | Pixels to subtract from the screen height. The card measures this itself; set it only if it sizes wrong. |

@@ -99,6 +99,18 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   await c().locator(".agenda:has-text('HOA meeting')").click(); await pg.waitForTimeout(200);
   ok((await modal().locator("[data-act=event-edit], [data-act=event-del]").count()) === 0, "no edit or delete when the calendar doesn't support it");
 
+  // an untouched screen picks up calendar changes on its own once the cache is 5 minutes old
+  const refreshed = await pg.evaluate(async () => {
+    const k = window.card; k._modal = null; k._render();
+    let calls = 0; const orig = k._hass.callApi; k._hass = { ...k._hass, callApi: (...a) => (calls++, orig(...a)) };
+    k._events["2000-01-01_2000-01-08"] = { ts: 0, events: [], loading: false };
+    for (const c of Object.values(k._events)) c.ts = 0;
+    k._onTick(); await new Promise((r) => setTimeout(r, 200));
+    return { calls, staleGone: !k._events["2000-01-01_2000-01-08"] };
+  });
+  ok(refreshed.calls > 0, "stale calendars re-fetch with no touch: " + refreshed.calls + " calls");
+  ok(refreshed.staleGone, "off-screen stale ranges are dropped");
+
   console.log(logs.filter((l) => l.includes("PAGEERROR") || l.includes("Couldn't")).join("\n"));
   await b.close(); srv.close();
 });

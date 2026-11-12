@@ -25,8 +25,14 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   assert.equal(svc(/SERVICE counter set_value \{"value":20\}/), 1);
   await shot("2-after-set");
   assert.match(await c().locator(".modal").innerText(), /20 stars now/);
+  // demerit "Hitting" takes 3 stars, one decrement per star
+  await c().locator('[data-act=demerit][data-i="0"]').click(); await pg.waitForTimeout(300);
+  assert.equal(svc(/SERVICE counter decrement/), 4, "Hitting takes 3 more");
+  assert.match(await c().locator(".modal").innerText(), /17 stars now/);
+  assert.match(await c().locator(".modal").innerText(), /Back talk −1/, "demerit without an icon still shows");
+  await shot("3-demerit");
   await c().locator(".modal [data-act=close]").click(); await pg.waitForTimeout(200);
-  assert.match(await c().locator(".bank").first().innerText(), /⭐ 20/);
+  assert.match(await c().locator(".bank").first().innerText(), /⭐ 17/);
   console.log("PASS");
  } catch (e) { console.log("FAIL", e.message); process.exitCode = 1; }
  const errs = logs.filter(l => l.startsWith("PAGEERROR")); if (errs.length) { console.log(errs.join("\n")); process.exitCode = 1; }

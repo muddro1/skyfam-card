@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0-beta.4";
+const SKYFAM_VERSION = "0.12.0-beta.5";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -677,6 +677,11 @@ class SkyFamCard extends HTMLElement {
     }
     // day rollover / periodic refresh
     if (this._dayKey !== ymd(new Date())) { this._dayKey = ymd(new Date()); this._events = {}; this._render(); }
+    // calendars aren't in _stateSig, so an untouched screen never re-fetched; re-render once the cache goes stale
+    else if (Object.values(this._events).some((c) => !c.loading && Date.now() - c.ts >= 5 * 60000)) {
+      this._render(); // visible ranges re-fetch here (and are now loading); drop stale ranges nobody asked for
+      for (const [k, c] of Object.entries(this._events)) if (!c.loading && Date.now() - c.ts >= 5 * 60000) delete this._events[k];
+    }
   }
 
   // Tabs in the order of config tabs (unlisted ones hidden); all of NAV when tabs isn't set.
@@ -1093,6 +1098,7 @@ class SkyFamCard extends HTMLElement {
       const st = p && this._hass.states[p.stars];
       inner = `<h2>Adjust ${esc(m.person)}'s stars</h2><p class="m-when">⭐ ${st ? esc(st.state) : "?"} stars now</p>
         <div class="row"><button class="btn step" data-act="star-adj" data-d="-1">−1</button><button class="btn step" data-act="star-adj" data-d="1">＋1</button></div>
+        ${(this._config.demerits || []).length ? `<div class="lbl">Demerits</div><div class="row wrap">${this._config.demerits.map((d, i) => `<button class="btn" data-act="demerit" data-i="${i}">${esc(d.icon || "👎")} ${esc(d.name || "")} −${Math.abs(Number(d.stars) || 1)}</button>`).join("")}</div>` : ""}
         <div class="lbl">Set to</div>
         <div class="row"><input class="in cost" type="number" min="0" name="stars-to" data-keep="stars-to" placeholder="${st ? esc(st.state) : ""}"><span class="star-lbl">⭐ stars</span><button class="btn primary" data-act="star-set">Set</button></div>
         <div class="row end"><button class="btn" data-act="close">Done</button></div>`;
@@ -1270,10 +1276,16 @@ class SkyFamCard extends HTMLElement {
       case "emoji-pick": { const i = this.shadowRoot.querySelector('.modal [name="emoji"]'); if (i) i.value = el.dataset.e; break; }
       case "step": { const i = this.shadowRoot.querySelector('.modal [name="cost"]'); if (i) i.value = Math.max(1, (Number(i.value) || 0) + Number(el.dataset.d)); break; }
       case "stars-adjust": { const n = el.dataset.p; this._gate(() => this._openModal({ type: "stars", person: n, live: true })); break; }
-      case "star-adj": case "star-set": {
+      case "star-adj": case "star-set": case "demerit": {
         const p = this._people.find((x) => x.name === (this._modal || {}).person);
         if (!p || !p.stars) break;
         if (a === "star-adj") { this._addStars(p.stars, Number(el.dataset.d)).catch(() => {}); break; }
+        if (a === "demerit") {
+          const d = (this._config.demerits || [])[Number(el.dataset.i)];
+          const n = d && Math.abs(Number(d.stars) || 1);
+          if (n) this._addStars(p.stars, -n).then(() => this._toast(`${d.name || "Demerit"}: −${n} ⭐ for ${p.name}`)).catch(() => {});
+          break;
+        }
         const i = this.shadowRoot.querySelector('.modal [name="stars-to"]');
         const v = Number(i && i.value);
         if (!i || i.value === "" || !Number.isInteger(v) || v < 0) { this._toast("Enter a whole number, 0 or more"); break; }
@@ -1614,7 +1626,7 @@ const ED_LABELS = {
   name: "Name", initials: "Initials", calendars: "Calendars", add_calendar: "New events go to",
   person: "Person (photo and home / away dot)", picture: "Picture URL", hide_pictures: "Use initials instead of photos", chores: "Chore list", stars: "Star counter",
   prefix_titles: "Title new events \"[Name] - Event\"", read_only: "Read only",
-  entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", parent_pin: "Parent PIN",
+  entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", demerits: "Demerits", parent_pin: "Parent PIN",
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
   height_offset: "Height offset", tabs: "Tabs", header_buttons: "Header buttons", today_past_events: "Past events on Today", event_weather: "Show the forecast on Today's events",
@@ -1630,6 +1642,7 @@ const ED_HELP = {
   rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",
   today_list_items: "When more than one list shows on Today, each shows this many items, then a \"+ more\" link",
   rewards_owed_list: "A Local To-do list. Each redeemed reward is added here until a parent marks it given",
+  demerits: "Quick buttons on the Adjust stars screen that take stars away, like \"Hitting\" for 3",
   parent_pin: "Asked before editing chores or rewards. Leave blank for no PIN",
   planner_shared_name: "Defaults to the first shared calendar's name",
   height_offset: "Leave blank to size automatically",
@@ -1685,6 +1698,11 @@ const ED_SCHEMA = {
   chores: [
     { name: "rewards_list", selector: edEnt("todo") },
     { name: "rewards_owed_list", selector: edEnt("todo") },
+    { name: "demerits", selector: { object: { multiple: true, label_field: "name", fields: {
+      name: { label: "Name", selector: { text: {} } },
+      icon: { label: "Icon (emoji)", selector: { text: {} } },
+      stars: { label: "Stars to take away", selector: edNum(1, 100) },
+    } } } },
     { name: "parent_pin", selector: { text: { type: "password" } } },
   ],
   planner: [
@@ -1699,7 +1717,7 @@ const ED_SCHEMA = {
 };
 
 const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "header_buttons", "people", "shared", "lists",
-  "rewards_list", "rewards_owed_list", "rewards", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
+  "rewards_list", "rewards_owed_list", "rewards", "demerits", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
 const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity", "today"];
 
 const edClean = (o, order) => {
@@ -1933,7 +1951,8 @@ class SkyFamCardEditor extends HTMLElement {
         if (!(this._config.header_buttons || []).length) delete this._config.header_buttons;
         if (!this._config.tabs || !this._config.tabs.length || this._config.tabs.join() === NAV.map((n) => n.id).join()) delete this._config.tabs;
       });
-    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }), set);
+    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, demerits: c.demerits || [], parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }),
+      (v) => { set(v); if (!(this._config.demerits || []).length) delete this._config.demerits; });
     slot("chores").insertAdjacentHTML("beforeend", `<div data-setup-box="chores"></div>`);
     this._form(slot("planner"), ED_SCHEMA.planner,
       () => (c = this._config, { planner_start_hour: c.planner_start_hour ?? 6, planner_end_hour: c.planner_end_hour ?? 22, planner_hour_height: c.planner_hour_height ?? 64, planner_shared_name: c.planner_shared_name }),
