@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0-beta.5";
+const SKYFAM_VERSION = "0.12.0";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
