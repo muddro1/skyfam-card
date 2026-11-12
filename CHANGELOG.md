@@ -2,6 +2,14 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.12.0: Header buttons, demerits, forecast in the weather pill
+Commit `c56a3a5`
+
+- **Forecast in the weather pill**: the header's weather pill shows the next days after today (day, icon, high). Up to 5 days on wide screens, 3 below 1100px, none below 900px or on phones.
+- **Header buttons**: add your own shortcut buttons next to the theme button with `header_buttons` (name, icon, link), in the visual editor under General. A link like `ks://camera` opens [Kiosk Satellite](https://kiosksatellite.com/docs/dashboard-links/)'s camera view. A button can run a Home Assistant tap action instead (e.g. a browser_mod popup), and `show_on: not_phone` / `phone` limits it to bigger screens or phones.
+- **Demerits**: buttons on the PIN-protected **⭐ Adjust stars** screen that take stars away, e.g. "✋ Hitting −3". Set them up in the editor under **Chores and rewards**, or with `demerits` (`name`, `stars`, optional `icon`). Stars stop at 0.
+- **Fix**: calendars refresh every 5 minutes on their own. Before, a screen nobody touched could miss new events until the weather or a person changed.
+
 ## v0.11.0: Drag to reorder chores
 Commit `7319602`
 
