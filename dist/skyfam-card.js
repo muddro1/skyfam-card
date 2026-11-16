@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.0";
+const SKYFAM_VERSION = "0.12.1-beta.1";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -159,10 +159,16 @@ class SkyFamCard extends HTMLElement {
     return [...new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores), this._config.rewards_list, this._config.rewards_owed_list].filter(Boolean))];
   }
   _teardown() {
-    this._unsubs.forEach((u) => { try { Promise.resolve(u).then((f) => f && f()); } catch (e) {} });
+    this._unsubs.forEach((u) => { try { Promise.resolve(u).then((f) => f && f()).catch(() => {}); } catch (e) {} });
     this._unsubs = [];
     this._subscribed = false;
+    clearTimeout(this._retryT);
+    if (this._conn && this._conn.removeEventListener) this._conn.removeEventListener("ready", this._onReady);
+    this._conn = null;
   }
+  _resubscribe() { this._teardown(); this._subscribe(); }
+  // a subscribe that fails (connection dropped or HA not ready) is never retried by HA, so retry it ourselves
+  _retrySoon() { clearTimeout(this._retryT); this._retryT = setTimeout(() => this.isConnected && this._resubscribe(), 15000); }
 
   // HA sets this on cards shown in the card editor preview and in dashboard edit mode
   set preview(v) { this._preview = !!v; this.toggleAttribute("preview", this._preview); }
@@ -232,21 +238,24 @@ class SkyFamCard extends HTMLElement {
     if (!this._hass || !this._hass.connection || !this.isConnected) return;
     this._subscribed = true;
     const conn = this._hass.connection;
+    this._onReady = this._onReady || (() => this._resubscribe());
+    if (conn.addEventListener) conn.addEventListener("ready", this._onReady); // fired on every websocket reconnect
+    this._conn = conn;
     this._todos = {};
     this._forecast = [];
     this._hourly = [];
     this._todoEntities().forEach((entity) => {
       const u = conn.subscribeMessage((msg) => { this._todos[entity] = msg.items || []; this._render(); },
-        { type: "todo/item/subscribe", entity_id: entity }).catch((e) => console.warn("skyfam todo", entity, e));
+        { type: "todo/item/subscribe", entity_id: entity }).catch((e) => { console.warn("skyfam todo", entity, e); this._retrySoon(); });
       this._unsubs.push(u);
     });
     if (this._config.weather_entity) {
       const u = conn.subscribeMessage((msg) => { this._forecast = msg.forecast || []; this._render(); },
-        { type: "weather/subscribe_forecast", forecast_type: "daily", entity_id: this._config.weather_entity }).catch(() => {});
+        { type: "weather/subscribe_forecast", forecast_type: "daily", entity_id: this._config.weather_entity }).catch(() => this._retrySoon());
       this._unsubs.push(u);
       if (this._config.event_weather) {
         const h = conn.subscribeMessage((msg) => { this._hourly = msg.forecast || []; this._render(); },
-          { type: "weather/subscribe_forecast", forecast_type: "hourly", entity_id: this._config.weather_entity }).catch(() => {});
+          { type: "weather/subscribe_forecast", forecast_type: "hourly", entity_id: this._config.weather_entity }).catch(() => this._retrySoon());
         this._unsubs.push(h);
       }
     }
