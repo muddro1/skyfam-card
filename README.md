@@ -28,7 +28,8 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Challenges**: one thing to do every day for a prize, like "🛏️ Sleep in your bed" 15 times for a Lego set. The kid taps **I did it today!** and gets a sticker (one a day). Missed days cost nothing; stickers just add up. At the goal: confetti, the prize goes on the Owed list, and the challenge starts over the next day. A parent (behind the PIN) can add, edit or delete a challenge and take a wrong sticker off. The tab shows once `challenges_list` is set.
 - **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, tap a demerit (like "Hitting −3") or set an exact total (behind the parent PIN when one is set).
 - **Owed rewards**: every redeemed reward goes on an Owed list on the Chores tab until a parent taps **Given**. **↩** cancels it and gives the stars back. The kid's rewards screen shows what they're waiting on.
-- **Photos**: a person's Home Assistant photo replaces their initials on chips, Planner columns and chore rings.
+- **Photos tab**: a gallery of family photos from pinned URLs and/or a JSON manifest (`photos_manifest`), pinned first, duplicate URLs dropped. Tap a photo for a fullscreen viewer with prev/next; with `photos_slideshow_minutes` set, the whole card turns into a Skylight-style photo frame after that many idle minutes — photos rotate every `photos_slideshow_seconds` and any tap goes back. Photos load straight from the URL, so files in `/config/www` (`/local/…`) or any web URL work.
+- **Photos (avatars)**: a person's Home Assistant photo replaces their initials on chips, Planner columns and chore rings. This is separate from the Photos tab.
 
 On screens under 760px wide the side rail becomes a bottom tab bar and the views stack.
 
@@ -134,6 +135,13 @@ lists:
     today: true
 rewards_list: todo.skyfam_rewards
 rewards_owed_list: todo.skyfam_rewards_owed
+photos:
+  - /local/photos/beach.jpg
+  - url: https://example.com/board.jpg
+    caption: First grade photo board
+photos_manifest: /local/photos/photos.json   # optional JSON list, refetched every 5 min
+photos_slideshow_minutes: 3                  # idle before photo-frame mode (0 = off)
+photos_slideshow_seconds: 12                 # seconds per photo in the frame
 ```
 
 ### Options
@@ -148,6 +156,10 @@ rewards_owed_list: todo.skyfam_rewards_owed
 | `rewards_owed_list` | none | A to-do list where redeemed rewards wait until a parent marks them given. Each item's description reads "Mia · 10⭐ · redeemed Nov 3". |
 | `challenges_list` | none | A to-do list for the **Challenges** tab, one item per challenge. The item is the challenge ("🛏️ Sleep in your bed") and its description holds the rest: "Leo · goal 15 · prize 🧸 Lego set · stickers 2026-11-20 2026-11-21". The editor can create it for you. |
 | `hide_pictures` | `false` | Show initials instead of photos. |
+| `photos` | `[]` | Pinned photos for the Photos tab, as a URL string or `url` + `caption`. Shown before the manifest's photos. |
+| `photos_manifest` | none | URL of a JSON list of photos (a plain array, or `{"photos": [...]}`), refetched when the tab opens and every 5 minutes. A manifest update needs no YAML edit. |
+| `photos_slideshow_minutes` | `0` | Idle minutes before photo-frame mode starts (needs at least one photo). Any tap exits it. |
+| `photos_slideshow_seconds` | `12` | How long each photo shows in photo-frame mode. |
 | `rewards` | `[]` | Static rewards, as `name`, `cost`, `icon`. Only used when `rewards_list` is not set. |
 | `weather_entity` | none | Current temperature, today's high/low, and a forecast in each week column. |
 | `title` | none | Shown next to the clock on wide screens. |
