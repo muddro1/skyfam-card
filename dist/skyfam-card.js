@@ -226,7 +226,7 @@ class SkyFamCard extends HTMLElement {
 
   connectedCallback() {
     this._tick = setInterval(() => this._onTick(), 15000);
-    this._onResize = () => requestAnimationFrame(() => this._fit());
+    this._onResize = () => requestAnimationFrame(() => { this._fit(); if (this._view === "photos" && window.innerWidth !== this._gridW) this._render(); });
     window.addEventListener("resize", this._onResize);
     setTimeout(this._onResize, 50); setTimeout(this._onResize, 800);
     if (this._hass && !this._subscribed) this._subscribe();
@@ -733,6 +733,22 @@ class SkyFamCard extends HTMLElement {
     }, { passive: true });
     root.addEventListener("input", () => (this._lastTouch = Date.now())); // on-screen keyboards send no pointer events
     root.addEventListener("pointerdown", (e) => this._dragStart(e));
+    // Swipe left/right to change photos while the fullscreen viewer is open.
+    root.addEventListener("pointerdown", (e) => {
+      if (!this._frame || this._frame.ss) { this._swipe = null; return; }
+      this._swipe = { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId };
+    }, { passive: true });
+    root.addEventListener("pointercancel", () => { this._swipe = null; }, { passive: true });
+    root.addEventListener("pointerup", (e) => {
+      const s = this._swipe; this._swipe = null;
+      if (!s || s.id !== e.pointerId || !this._frame || this._frame.ss) return;
+      const dx = e.clientX - s.x, dy = e.clientY - s.y;
+      if (Math.abs(dx) < 60 || Math.abs(dy) > 50 || Date.now() - s.t > 800) return;
+      const n = this._photos().length;
+      if (n > 1) { this._frame.i = (this._frame.i + (dx < 0 ? 1 : n - 1)) % n; this._lastTouch = Date.now(); this._render(); }
+      // the synthesized click that follows a swipe must not also close the viewer
+      const stop = (ev) => ev.stopPropagation(); this.shadowRoot.addEventListener("click", stop, { capture: true, once: true }); setTimeout(() => this.shadowRoot.removeEventListener("click", stop, { capture: true }), 0);
+    }, { passive: true });
   }
 
   // Edit mode: drag a chore by its grip to reorder it within its time-of-day group.
@@ -1295,7 +1311,12 @@ class SkyFamCard extends HTMLElement {
     this._loadManifest();
     const photos = this._photos();
     if (!photos.length) return `<div class="empty">${this._manifest.loading ? "Loading photos…" : "No photos yet. Add image URLs or a manifest under Photos in the card's Edit screen."}</div>`;
-    const grid = `<div class="ph-grid">${photos.map((p, i) => `<button class="ph" data-act="photo" data-i="${i}"><img loading="lazy" src="${esc(p.url)}" alt="">${p.caption ? `<span class="cap">${esc(p.caption)}</span>` : ""}</button>`).join("")}</div>`;
+    const grid = (() => {
+      const w = window.innerWidth;
+      this._gridW = w;
+      const cols = Math.max(2, Math.min(photos.length, w >= 900 ? 4 : w >= 640 ? 3 : 2));
+      return `<div class="ph-grid" style="columns:${cols}">${photos.map((p, i) => `<button class="ph" data-act="photo" data-i="${i}"><img loading="lazy" src="${esc(p.url)}" alt="">${p.caption ? `<span class="cap">${esc(p.caption)}</span>` : ""}</button>`).join("")}</div>`;
+    })();
     return grid + (this._manifest.err ? `<div class="empty small">Manifest failed: ${esc(this._manifest.err)}${(this._config.photos || []).length ? " — pinned photos still shown." : ""}</div>` : "");
   }
 
@@ -1332,7 +1353,7 @@ class SkyFamCard extends HTMLElement {
     const clock = f.ss ? `<div class="fr-clock">${this._timeStr(now)}<small>${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</small></div>` : "";
     const ctrls = f.ss ? "" : `<button class="fr-x" data-act="viewer-close" title="Close">✕</button><button class="fr-nav fr-prev" data-act="viewer-prev" title="Previous">‹</button><button class="fr-nav fr-next" data-act="viewer-next" title="Next">›</button><div class="fr-cnt">${f.i + 1} / ${photos.length}</div>`;
     host.className = `frame-host on${f.ss ? " ss" : ""}`;
-    host.innerHTML = `<div class="fr-scrim" data-act="frame-scrim"><img class="fr-bg" src="${esc(p.url)}" alt=""><img class="fr-img" src="${esc(p.url)}" alt="">${clock}${p.caption ? `<div class="fr-cap">${esc(p.caption)}</div>` : ""}${ctrls}</div>`;
+    host.innerHTML = `<div class="fr-scrim" data-act="frame-scrim"><img class="fr-bg" draggable="false" src="${esc(p.url)}" alt=""><img class="fr-img" draggable="false" src="${esc(p.url)}" alt="">${clock}${p.caption ? `<div class="fr-cap">${esc(p.caption)}</div>` : ""}${ctrls}</div>`;
     // warm the next photo while this one is on screen
     const nx = photos[(f.i + 1) % photos.length];
     if (nx && nx.url !== p.url) { const im = new Image(); im.src = nx.url; }
@@ -1894,7 +1915,8 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
 .ph .cap { position:absolute; left:0; right:0; bottom:0; padding:18px 10px 7px; font-size:13px; font-weight:700; color:#fff; background:linear-gradient(transparent, #000b); }
 .frame-host { display:none; }
 .frame-host.on { display:block; position:absolute; inset:0; z-index:30; background:#08090b; }
-.fr-scrim { position:absolute; inset:0; }
+.fr-scrim { position:absolute; inset:0; touch-action:none; -webkit-user-select:none; user-select:none; }
+.fr-bg, .fr-img { -webkit-user-drag:none; -webkit-touch-callout:none; }
 .fr-bg { position:absolute; inset:-8%; width:116%; height:116%; object-fit:cover; filter:blur(26px) saturate(1.25); opacity:.5; }
 .fr-img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .fr-clock { position:absolute; top:18px; left:22px; color:#fff; font-weight:800; font-size:30px; text-shadow:0 1px 10px #000; pointer-events:none; }

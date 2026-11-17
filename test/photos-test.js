@@ -20,6 +20,7 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   assert.match(await c().locator(".ph").first().locator("img").getAttribute("src"), /p1\.svg/, "pinned photos come first");
   assert.equal(await c().locator(".ph .cap").first().innerText(), "Pinned");
   await shot(pg, "1-grid");
+  assert.match(await c().locator(".ph-grid").getAttribute("style"), /columns:3/, "3 photos fill the wide grid with 3 columns");
   // fullscreen viewer with wrapping prev/next
   await c().locator(".ph").first().click(); await pg.waitForTimeout(300);
   assert.ok(await pg.locator(".frame-host.on .fr-img").isVisible(), "viewer opens on tap");
@@ -28,6 +29,12 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   assert.equal(await pg.locator(".fr-cnt").innerText(), "2 / 3");
   await pg.locator(".fr-prev").click(); await pg.locator(".fr-prev").click(); await pg.waitForTimeout(250);
   assert.equal(await pg.locator(".fr-cnt").innerText(), "3 / 3", "prev wraps past the first photo");
+  // swipe left/right navigates without closing the viewer
+  await pg.mouse.move(700,400); await pg.mouse.down(); await pg.mouse.move(480,400,{steps:8}); await pg.mouse.up(); await pg.waitForTimeout(300);
+  assert.equal(await pg.locator(".fr-cnt").innerText(), "1 / 3", "swipe left goes to the next photo");
+  assert.equal(await pg.locator(".frame-host.on").count(), 1, "swipe does not close the viewer");
+  await pg.mouse.move(480,400); await pg.mouse.down(); await pg.mouse.move(700,400,{steps:8}); await pg.mouse.up(); await pg.waitForTimeout(300);
+  assert.equal(await pg.locator(".fr-cnt").innerText(), "3 / 3", "swipe right goes back");
   await shot(pg, "2-viewer");
   await pg.locator(".fr-x").click(); await pg.waitForTimeout(250);
   assert.equal(await c().locator(".frame-host.on").count(), 0, "close exits the viewer");
@@ -62,6 +69,7 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   assert.deepEqual(await c().locator(".rail .nav > span:last-child").allInnerTexts(), ["Photos","Today"], "tabs honors order and hides the rest");
   assert.ok(await c().locator(".ph").first().isVisible(), "start view falls back to the first tab");
   await pg.setViewportSize({width:390,height:840}); await pg.waitForTimeout(400);
+  assert.match(await c().locator(".ph-grid").getAttribute("style"), /columns:2/, "rotating to phone width re-renders with 2 columns");
   assert.equal(await pg.locator(".fr-x").count(), 0);
   await shot(pg, "5-phone");
   console.log("PASS tabs + phone");
