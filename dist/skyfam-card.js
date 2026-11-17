@@ -1333,6 +1333,9 @@ class SkyFamCard extends HTMLElement {
     const ctrls = f.ss ? "" : `<button class="fr-x" data-act="viewer-close" title="Close">✕</button><button class="fr-nav fr-prev" data-act="viewer-prev" title="Previous">‹</button><button class="fr-nav fr-next" data-act="viewer-next" title="Next">›</button><div class="fr-cnt">${f.i + 1} / ${photos.length}</div>`;
     host.className = `frame-host on${f.ss ? " ss" : ""}`;
     host.innerHTML = `<div class="fr-scrim" data-act="frame-scrim"><img class="fr-bg" src="${esc(p.url)}" alt=""><img class="fr-img" src="${esc(p.url)}" alt="">${clock}${p.caption ? `<div class="fr-cap">${esc(p.caption)}</div>` : ""}${ctrls}</div>`;
+    // warm the next photo while this one is on screen
+    const nx = photos[(f.i + 1) % photos.length];
+    if (nx && nx.url !== p.url) { const im = new Image(); im.src = nx.url; }
   }
 
   /* ---------- events ---------- */
