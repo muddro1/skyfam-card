@@ -2,6 +2,17 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.12.1: Fixes
+Commit `dc398aa`
+
+- **Fix**: chores, lists and the forecast load again after the dashboard's connection to Home Assistant drops and comes back, for example when the kiosk app restarts. Before, the chore list could stay empty until you refreshed the page.
+- **Fix**: chore edit mode locks again when the screen is left alone, so the parent PIN is asked again. Before, a kid could edit or delete chores once a parent forgot to tap Done editing.
+- **Fix**: editing an event titled `[Name] - Event` keeps the tag, so it stays that person's event.
+- **Fix**: typing counts as activity, so the idle timer no longer closes a form you're typing in.
+- **Fix**: if a save fails, the chore or to-do tick goes back and text typed into a list isn't lost. Stars can't be taken away for a chore that never saved.
+- **Fix**: the Planner lines up events, hours and the now line on the two clock-change days a year.
+- **Fix**: clearing the height offset goes back to automatic sizing right away.
+
 ## v0.12.0: Header buttons, demerits, forecast in the weather pill
 Commit `c56a3a5`
 
