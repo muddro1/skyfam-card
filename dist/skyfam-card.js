@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.1-beta.2";
+const SKYFAM_VERSION = "0.13.0-beta.1";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -30,7 +30,12 @@ const NAV = [
   { id: "month", label: "Month", mdi: "mdi:calendar-month", emoji: "📅" },
   { id: "chores", label: "Chores", mdi: "mdi:star-circle", emoji: "⭐" },
   { id: "lists", label: "Lists", mdi: "mdi:format-list-checks", emoji: "📝" },
+  { id: "challenges", label: "Challenges", mdi: "mdi:trophy", emoji: "🏆" },
 ];
+const CHALLENGE_EMOJI = ["🛏️", "🌙", "🪥", "🥦", "📚", "🚽", "🧘", "🎹", "🏃", "🤫", "🙏", "💧"];
+// The sticker a day gets: picked from the date, so every screen shows the same one.
+const STICKERS = ["⭐", "🌟", "🦄", "🚀", "🐶", "🦖", "🌈", "🍭", "🐱", "⚽", "🎈", "🐠", "🦋", "🍩", "🐼", "🏎️"];
+const stickerFor = (date) => STICKERS[[...date].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 9973, 7) % STICKERS.length];
 const THEMES = [
   { id: "light", label: "Light", icon: "☀️" },
   { id: "dark", label: "Dark", icon: "🌙" },
@@ -157,7 +162,7 @@ class SkyFamCard extends HTMLElement {
   }
 
   _todoEntities() {
-    return [...new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores), this._config.rewards_list, this._config.rewards_owed_list].filter(Boolean))];
+    return [...new Set([...this._lists.map((l) => l.entity), ...this._people.map((p) => p.chores), this._config.rewards_list, this._config.rewards_owed_list, this._config.challenges_list].filter(Boolean))];
   }
   _teardown() {
     this._unsubs.forEach((u) => { try { Promise.resolve(u).then((f) => f && f()).catch(() => {}); } catch (e) {} });
@@ -552,6 +557,78 @@ class SkyFamCard extends HTMLElement {
       ${given.length ? `<button class="showdone" data-act="showdone" data-e="${esc(ent)}">${show ? "Hide" : "Show"} given (${given.length})</button>${show ? `<div class="owed-list">${given.map(row).join("")}</div>` : ""}` : ""}</div>`;
   }
 
+  // Challenges: one item each on challenges_list. "🛏️ Sleep in your bed" / "Leo · goal 15 · prize 🧸 Lego set · stickers 2026-11-20 2026-11-21"
+  // Stickers add up (a missed day costs nothing); at most one a day.
+  _challenges() {
+    return (this._todos[this._config.challenges_list] || []).map((i) => {
+      const [icon, name] = splitEmoji(i.summary);
+      const d = i.description || "";
+      // read part by part, so a prize like "Unicorn stickers" can't be taken for the stickers part
+      const parts = d.split("·").map((s) => s.trim());
+      const seg = (k) => { const s = parts.find((x) => x.toLowerCase().startsWith(k + " ")); return s ? s.slice(k.length + 1).trim() : ""; };
+      const kid = parts[0];
+      const goal = Math.min(100, Math.max(1, Math.round(Number(seg("goal")) || 15))); // a hand-edited "goal 14.5" must not break the tab
+      const person = this._people.find((x) => x.name.toLowerCase() === kid.toLowerCase());
+      const stickers = [...new Set(parseDates(seg("stickers")) || [])].sort();
+      const won = (parseDates(seg("won")) || [""])[0];
+      return { uid: i.uid, raw: i, icon: icon || "⭐", name: name || i.summary, kid, person, goal, prize: seg("prize"), stickers, won };
+    });
+  }
+  _chDesc(c, stickers) { return `${c.kid} · goal ${c.goal}${c.prize ? ` · prize ${c.prize}` : ""}${c.won ? ` · won ${c.won}` : ""}${stickers.length ? ` · stickers ${stickers.join(" ")}` : ""}`; }
+
+  async _setStickers(c, stickers) {
+    const old = c.raw.description;
+    c.raw.description = this._chDesc(c, stickers); // optimistic, undone if the save fails
+    this._render();
+    try { await this._svc("todo", "update_item", { item: c.uid, description: c.raw.description }, { entity_id: this._config.challenges_list }); }
+    catch (e) { c.raw.description = old; this._render(); throw e; }
+  }
+
+  async _addSticker(uid) {
+    const c = this._challenges().find((x) => x.uid === uid);
+    const today = ymd(new Date());
+    if (!c || c.stickers.includes(today) || c.won === today || c.stickers.length >= c.goal) return; // the day a prize is won doesn't also start the next round
+    const stickers = [...c.stickers, today];
+    await this._setStickers(c, stickers);
+    if (stickers.length >= c.goal) return this._claim(c.uid);
+    const left = c.goal - stickers.length;
+    this._celebrate(`${stickerFor(today)} Sticker ${stickers.length} of ${c.goal}! ${left} to go`, false);
+  }
+
+  // Goal reached: the prize goes on the owed list (when there is one), then the challenge starts over.
+  // Kept separate from the last sticker so a failed save can be retried with the Claim button.
+  async _claim(uid) {
+    if (this._claiming) return;
+    const c = this._challenges().find((x) => x.uid === uid);
+    if (!c || c.stickers.length < c.goal) return;
+    this._claiming = true;
+    try {
+      const owed = this._config.rewards_owed_list, prize = c.prize || `${c.icon} ${c.name}`;
+      // the name tells two challenges with the same prize apart; ⭐ and · are dropped so the owed list can't read it as a star cost or a new part
+      const description = `${c.kid} · ${c.name.replace(/[⭐·]/g, "").replace(/\s+/g, " ").trim()} · redeemed ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`;
+      // a retry after the reset failed finds the prize already owed and doesn't add it twice
+      const already = (this._todos[owed] || []).some((i) => i.status !== "completed" && i.summary === prize && i.description === description);
+      if (owed && !already) await this._svc("todo", "add_item", { item: prize, description }, { entity_id: owed });
+      c.won = ymd(new Date());
+      await this._setStickers(c, []);
+      this._celebrate(`🏆 ${c.kid || "You"} did it! ${c.goal} stickers${c.prize ? `: ${c.prize}` : ""}${owed ? " is on the owed list" : ""}`, true);
+    } finally { this._claiming = false; }
+  }
+
+  async _saveChallenge(f) {
+    const name = f.name.trim(), kid = f.kid;
+    if (!name) { this._toast("Give the challenge a name"); return false; }
+    if (!kid) { this._toast("Pick who the challenge is for"); return false; }
+    const old = f.uid && this._challenges().find((x) => x.uid === f.uid);
+    const c = { kid, won: old && old.won, goal: Math.min(100, Math.max(1, Math.round(Number(f.goal) || 15))), prize: f.prize.trim().replace(/·/g, "-") };
+    const summary = (f.emoji.trim() ? f.emoji.trim() + " " : "") + name;
+    const ent = this._config.challenges_list;
+    const description = this._chDesc(c, old ? old.stickers : []); // editing keeps the stickers earned so far
+    if (old) await this._svc("todo", "update_item", { item: f.uid, rename: summary, description }, { entity_id: ent });
+    else await this._svc("todo", "add_item", { item: summary, description }, { entity_id: ent });
+    return true;
+  }
+
   // Optional parent PIN (config parent_pin) guards editing; stays unlocked for 5 minutes.
   _gate(fn) {
     const pin = this._config.parent_pin;
@@ -698,8 +775,10 @@ class SkyFamCard extends HTMLElement {
   // Tabs in the order of config tabs (unlisted ones hidden); all of NAV when tabs isn't set.
   _tabs() {
     const ids = Array.isArray(this._config.tabs) ? this._config.tabs : [];
-    const tabs = ids.map((id) => NAV.find((n) => n.id === id)).filter(Boolean);
-    return tabs.length ? tabs : NAV;
+    // the Challenges tab needs its list, so it stays hidden until one is set up
+    const nav = NAV.filter((n) => n.id !== "challenges" || this._config.challenges_list);
+    const tabs = ids.map((id) => nav.find((n) => n.id === id)).filter(Boolean);
+    return tabs.length ? tabs : nav;
   }
   // The start view, or the first tab when the start view's tab is hidden.
   _home() {
@@ -1021,6 +1100,28 @@ class SkyFamCard extends HTMLElement {
     return `<div class="lists">${this._lists.map((l) => `<div class="card">${this._listPanel(l, false)}</div>`).join("")}</div>`;
   }
 
+  _view_challenges() {
+    const bar = `<div class="chorebar"><button class="btn primary" data-act="ch-add">＋ New challenge</button></div>`;
+    if (!this._todos[this._config.challenges_list]) return bar + `<div class="empty">Loading…</div>`;
+    const today = ymd(new Date());
+    const cards = this._challenges().map((c) => {
+      const n = c.stickers.length, won = n >= c.goal, mine = c.stickers.includes(today) || c.won === today;
+      const slots = [...Array(c.goal)].map((_, i) => i < n
+        ? `<span class="stk on" title="${esc(dateLabel([c.stickers[i]]))}">${stickerFor(c.stickers[i])}</span>`
+        : i === c.goal - 1 ? `<span class="stk prize">🏆</span>` : `<span class="stk">${i + 1}</span>`).join("");
+      const btn = won ? `<button class="btn primary big" data-act="ch-claim" data-uid="${esc(c.uid)}">🏆 Get the prize!</button>`
+        : mine ? `<button class="btn big" disabled>${c.won === today && !n ? "🏆 Won today! New stickers start tomorrow" : "✓ Today's sticker is in. See you tomorrow!"}</button>`
+        : `<button class="btn primary big" data-act="ch-sticker" data-uid="${esc(c.uid)}">${esc(c.icon)} I did it today!</button>`;
+      const left = c.goal - n;
+      return `<div class="card chal" style="--c:${c.person ? c.person.color : "var(--accent)"}">
+        <div class="ch-head"><span class="ch-i">${esc(c.icon)}</span><div class="ch-t"><b>${esc(c.name)}</b>
+          <span><span class="kidtag">${esc(c.kid || "?")}</span> · ${n} of ${c.goal}${won ? "" : ` · ${left} to go`}${c.prize ? ` for ${esc(c.prize)}` : ""}</span></div>
+          <button class="ch-pen" data-act="ch-open" data-uid="${esc(c.uid)}" title="Edit challenge">✏️</button></div>
+        <div class="stks">${slots}</div>${btn}</div>`;
+    }).join("");
+    return bar + `<div class="chals">${cards || `<div class="empty">No challenges yet. Make one, like 🛏️ Sleep in your bed for 15 days to win a prize.</div>`}</div>`;
+  }
+
   /* ---------- modal ---------- */
   _renderModal() {
     const host = this.shadowRoot.querySelector(".modal-host");
@@ -1106,6 +1207,19 @@ class SkyFamCard extends HTMLElement {
         <div class="lbl">Stars earned</div>
         <div class="who">${[0, 1, 2, 3, 4, 5].map((n) => `<label class="whochip" style="--c:#d9a400"><input type="radio" name="stars" value="${n}" ${Number(m.stars) === n ? "checked" : ""}><span>${n ? n + " ⭐" : "None"}</span></label>`).join("")}</div>
         <div class="row end">${m.uid ? `<button class="btn danger" data-act="chore-del">Delete</button><span class="grow"></span>` : ""}<button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="chore-save">Save</button></div>`;
+    } else if (m.type === "challenge-form") {
+      const c = m.uid && this._challenges().find((x) => x.uid === m.uid);
+      inner = `<h2>${m.uid ? "Edit challenge" : "New challenge"}</h2>
+        <div class="row"><input class="in emoji" name="emoji" value="${esc(m.emoji || "")}" placeholder="⭐"><input class="in" name="name" value="${esc(m.name || "")}" placeholder="What to do, like Sleep in your bed"></div>
+        <div class="emojis">${CHALLENGE_EMOJI.map((e) => `<button data-act="emoji-pick" data-e="${e}">${e}</button>`).join("")}</div>
+        <div class="lbl">For</div>
+        <div class="who">${this._people.map((k) => `<label class="whochip" style="--c:${k.color}"><input type="radio" name="kid" value="${esc(k.name)}" ${m.kid === k.name ? "checked" : ""}><span>${esc(k.name)}</span></label>`).join("")}</div>
+        <div class="lbl">Days to win <small>(one sticker a day; missed days don't count against them)</small></div>
+        <div class="row"><button class="btn step" data-act="step" data-n="goal" data-d="-1">−</button><input class="in cost" type="number" min="1" max="100" name="goal" value="${m.goal || 15}"><span class="star-lbl">stickers</span><button class="btn step" data-act="step" data-n="goal" data-d="1">＋</button></div>
+        <div class="lbl">Prize</div>
+        <input class="in" name="prize" value="${esc(m.prize || "")}" placeholder="Like 🧸 A new Lego set">
+        ${c ? `<div class="lbl">Stickers so far</div><div class="row"><span class="star-lbl ch-count">${c.stickers.length} of ${c.goal}</span>${c.stickers.length ? `<button class="btn" data-act="ch-unsticker">− Take the last one off</button>` : ""}</div>` : ""}
+        <div class="row end">${m.uid ? `<button class="btn danger" data-act="ch-del">Delete</button><span class="grow"></span>` : ""}<button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="ch-save">Save</button></div>`;
     } else if (m.type === "stars") {
       const p = this._people.find((x) => x.name === m.person);
       const st = p && this._hass.states[p.stars];
@@ -1287,7 +1401,42 @@ class SkyFamCard extends HTMLElement {
       }
       case "date-today": { const i = this.shadowRoot.querySelector('.modal [name="date"]'); if (i) i.value = ymd(new Date()); break; }
       case "emoji-pick": { const i = this.shadowRoot.querySelector('.modal [name="emoji"]'); if (i) i.value = el.dataset.e; break; }
-      case "step": { const i = this.shadowRoot.querySelector('.modal [name="cost"]'); if (i) i.value = Math.max(1, (Number(i.value) || 0) + Number(el.dataset.d)); break; }
+      case "step": { const i = this.shadowRoot.querySelector(`.modal [name="${el.dataset.n || "cost"}"]`); if (i) i.value = Math.max(1, (Number(i.value) || 0) + Number(el.dataset.d)); break; }
+      case "ch-sticker": el.disabled = true; this._addSticker(el.dataset.uid).catch(() => this._render()); break;
+      case "ch-claim": el.disabled = true; this._claim(el.dataset.uid).catch(() => this._render()); break;
+      case "ch-add": this._gate(() => this._openModal({ type: "challenge-form", kid: (this._people.find((x) => x.chores) || this._people[0] || {}).name, goal: 15, emoji: "", name: "", prize: "" })); break;
+      case "ch-open": {
+        const c = this._challenges().find((x) => x.uid === el.dataset.uid);
+        if (c) this._gate(() => this._openModal({ type: "challenge-form", uid: c.uid, kid: c.person ? c.person.name : c.kid, goal: c.goal, emoji: splitEmoji(c.raw.summary)[0], name: c.name, prize: c.prize }));
+        break;
+      }
+      case "ch-save": {
+        const mod = this.shadowRoot.querySelector(".modal");
+        const val = (n) => { const x = mod.querySelector(`[name="${n}"]:checked`) || mod.querySelector(`[name="${n}"]:not([type=radio])`); return x ? x.value : ""; };
+        const f = { uid: this._modal.uid, emoji: val("emoji"), name: val("name"), kid: val("kid"), goal: val("goal"), prize: val("prize") };
+        el.disabled = true;
+        this._saveChallenge(f).then((ok) => { if (ok) { this._closeModal(); this._toast(f.uid ? "Challenge saved ✓" : "Challenge added ✓"); } else el.disabled = false; }).catch(() => (el.disabled = false));
+        break;
+      }
+      case "ch-unsticker": {
+        const c = this._challenges().find((x) => x.uid === (this._modal || {}).uid);
+        if (!c || !c.stickers.length) break;
+        const rest = c.stickers.slice(0, -1);
+        this._setStickers(c, rest).then(() => {
+          const n = this.shadowRoot.querySelector(".modal .ch-count"); if (n) n.textContent = `${rest.length} of ${c.goal}`;
+          if (!rest.length) el.remove();
+          this._toast("Sticker taken off");
+        }).catch(() => {});
+        break;
+      }
+      case "ch-del": {
+        const m = this._modal;
+        this._openModal({ type: "confirm", text: `Delete the “${m.name}” challenge and its stickers?`, onYes: async () => {
+          await this._svc("todo", "remove_item", { item: m.uid }, { entity_id: this._config.challenges_list });
+          this._toast("Challenge deleted");
+        } });
+        break;
+      }
       case "stars-adjust": { const n = el.dataset.p; this._gate(() => this._openModal({ type: "stars", person: n, live: true })); break; }
       case "star-adj": case "star-set": case "demerit": {
         const p = this._people.find((x) => x.name === (this._modal || {}).person);
@@ -1596,6 +1745,16 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
 .owed-row .ri { font-size:28px; } .owed-row .on { flex:1; display:flex; flex-direction:column; min-width:0; }
 .owed-row .on b { font-size:17px; } .owed-row small { color:var(--mute); font-weight:700; font-size:13px; }
 .kidtag { color:var(--c); font-weight:900; }
+.chals { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:18px; align-items:start; }
+.chal { background:color-mix(in srgb, var(--c) 9%, var(--card)); display:flex; flex-direction:column; gap:14px; }
+.ch-head { display:flex; align-items:center; gap:12px; } .ch-i { font-size:44px; line-height:1; }
+.ch-t { flex:1; min-width:0; display:flex; flex-direction:column; } .ch-t b { font-size:22px; } .ch-t > span { color:var(--mute); font-weight:700; }
+.ch-pen { font-size:18px; padding:8px; border-radius:12px; opacity:.6; }
+.stks { display:grid; grid-template-columns:repeat(auto-fill, minmax(46px, 1fr)); gap:8px; }
+.stk { aspect-ratio:1; display:grid; place-items:center; border-radius:50%; border:2px dashed color-mix(in srgb, var(--c) 45%, var(--line)); color:var(--mute); font-weight:800; font-size:14px; }
+.stk.on { border:0; background:var(--card); font-size:28px; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+.stk.prize { border-style:solid; font-size:24px; }
+.btn.big { padding:16px 20px; font-size:18px; border-radius:18px; text-align:center; }
 .owed-row.done { opacity:.55; } .owed-row.done b { text-decoration:line-through; }
 .btn.sm { padding:8px 12px; font-size:14px; border-radius:12px; }
 .waiting { background:color-mix(in srgb, #d9a400 14%, var(--card)); padding:10px 14px; border-radius:14px; font-weight:700 !important; }
@@ -1639,7 +1798,7 @@ const ED_LABELS = {
   name: "Name", initials: "Initials", calendars: "Calendars", add_calendar: "New events go to",
   person: "Person (photo and home / away dot)", picture: "Picture URL", hide_pictures: "Use initials instead of photos", chores: "Chore list", stars: "Star counter",
   prefix_titles: "Title new events \"[Name] - Event\"", read_only: "Read only",
-  entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", demerits: "Demerits", parent_pin: "Parent PIN",
+  entity: "To-do list", today: "Show on Today", today_list_items: "Items per list on Today", rewards_list: "Rewards list", rewards_owed_list: "Owed rewards list", challenges_list: "Challenges list", demerits: "Demerits", parent_pin: "Parent PIN",
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
   height_offset: "Height offset", tabs: "Tabs", header_buttons: "Header buttons", today_past_events: "Past events on Today", event_weather: "Show the forecast on Today's events",
@@ -1655,6 +1814,7 @@ const ED_HELP = {
   rewards_list: "A Local To-do list. Each item is a reward and its description is the cost, like \"10⭐\"",
   today_list_items: "When more than one list shows on Today, each shows this many items, then a \"+ more\" link",
   rewards_owed_list: "A Local To-do list. Each redeemed reward is added here until a parent marks it given",
+  challenges_list: "A Local To-do list for the Challenges tab: do one thing every day, get a sticker, win a prize. The tab shows once this is set",
   demerits: "Quick buttons on the Adjust stars screen that take stars away, like \"Hitting\" for 3",
   parent_pin: "Asked before editing chores or rewards. Leave blank for no PIN",
   planner_shared_name: "Defaults to the first shared calendar's name",
@@ -1711,6 +1871,7 @@ const ED_SCHEMA = {
   chores: [
     { name: "rewards_list", selector: edEnt("todo") },
     { name: "rewards_owed_list", selector: edEnt("todo") },
+    { name: "challenges_list", selector: edEnt("todo") },
     { name: "demerits", selector: { object: { multiple: true, label_field: "name", fields: {
       name: { label: "Name", selector: { text: {} } },
       icon: { label: "Icon (emoji)", selector: { text: {} } },
@@ -1730,7 +1891,7 @@ const ED_SCHEMA = {
 };
 
 const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "header_buttons", "people", "shared", "lists",
-  "rewards_list", "rewards_owed_list", "rewards", "demerits", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
+  "rewards_list", "rewards_owed_list", "challenges_list", "rewards", "demerits", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
 const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity", "today"];
 
 const edClean = (o, order) => {
@@ -1817,6 +1978,7 @@ class SkyFamCardEditor extends HTMLElement {
     }
     const out = [];
     if (!c.rewards_list || !c.rewards_owed_list) out.push(btn("rewards", "✨ Create rewards lists", "Makes \"SkyFam Rewards\" and \"SkyFam Rewards Owed\" Local To-do lists and fills them in here"));
+    if (!c.challenges_list) out.push(btn("challenges", "🏆 Create a challenges list", "Makes a \"SkyFam Challenges\" Local To-do list and turns on the Challenges tab"));
     const kids = c.people.filter((p) => p.chores);
     if (kids.length) {
       const exists = this._setupDone.has("reset") || Object.values(h.states || {}).some((s) => s.entity_id && s.entity_id.startsWith("automation.") && s.attributes && s.attributes.id === SF_RESET_ID);
@@ -1843,6 +2005,8 @@ class SkyFamCardEditor extends HTMLElement {
       if (key === "rewards") {
         if (!this._config.rewards_list) { const e = await sfCreateTodo(h, "SkyFam Rewards"); put((c) => (c.rewards_list = e)); }
         if (!this._config.rewards_owed_list) { const e = await sfCreateTodo(h, "SkyFam Rewards Owed"); put((c) => (c.rewards_owed_list = e)); }
+      } else if (key === "challenges") {
+        if (!this._config.challenges_list) { const e = await sfCreateTodo(h, "SkyFam Challenges"); put((c) => (c.challenges_list = e)); }
       } else if (key === "reset") {
         await h.callApi("POST", `config/automation/config/${SF_RESET_ID}`, sfResetAutomation(this._config.people.map((p) => p.chores).filter(Boolean)));
         this._setupDone.add("reset");
@@ -1945,7 +2109,7 @@ class SkyFamCardEditor extends HTMLElement {
       ${section("people", "People", `${c.people.length} ${c.people.length === 1 ? "person" : "people"}, each with their own color and calendars`, items("people", c.people, "Add person"))}
       ${section("shared", "Shared calendars", "Family, birthdays, trash day and other calendars that aren't one person's", items("shared", c.shared, "Add shared calendar"))}
       ${section("lists", "Lists", "To-do lists for the Lists tab. Turn on \"Show on Today\" for the ones to stack on the Today screen", items("lists", c.lists, "Add list") + `<div data-slot="listopts"></div>`)}
-      ${section("chores", "Chores and rewards", "Chore lists and star counters are set per person above", `<div data-slot="chores"></div>`)}
+      ${section("chores", "Chores, rewards and challenges", "Chore lists and star counters are set per person above", `<div data-slot="chores"></div>`)}
       ${section("planner", "Planner", "Hours shown in the Planner view", `<div data-slot="planner"></div>`)}
       ${section("advanced", "Advanced", "Layout tweaks", `<div data-slot="advanced"></div>`)}`;
     const root = this.shadowRoot;
@@ -1964,7 +2128,7 @@ class SkyFamCardEditor extends HTMLElement {
         if (!(this._config.header_buttons || []).length) delete this._config.header_buttons;
         if (!this._config.tabs || !this._config.tabs.length || this._config.tabs.join() === NAV.map((n) => n.id).join()) delete this._config.tabs;
       });
-    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, demerits: c.demerits || [], parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }),
+    this._form(slot("chores"), ED_SCHEMA.chores, () => (c = this._config, { rewards_list: c.rewards_list, rewards_owed_list: c.rewards_owed_list, challenges_list: c.challenges_list, demerits: c.demerits || [], parent_pin: c.parent_pin == null ? "" : String(c.parent_pin) }),
       (v) => { set(v); if (!(this._config.demerits || []).length) delete this._config.demerits; });
     slot("chores").insertAdjacentHTML("beforeend", `<div data-setup-box="chores"></div>`);
     this._form(slot("planner"), ED_SCHEMA.planner,

@@ -25,6 +25,7 @@ It uses only native Home Assistant entities, so everything also works with voice
 - **Same event, two calendars**: an event with the same title, times and location on two people's calendars shows once, in both colors and in both Planner columns. Edits and deletes apply to every copy.
 - **Chores**: big tap targets grouped by Morning / Afternoon / Evening / Anytime, stars per chore, a progress ring, and confetti when a kid finishes everything. Add, edit and delete chores from the card. To move a chore to another kid, edit it and change who it's for; tick more than one kid to copy it.
 - **Lists**: every configured to-do list side by side, with add, check off, and show completed.
+- **Challenges**: one thing to do every day for a prize, like "🛏️ Sleep in your bed" 15 times for a Lego set. The kid taps **I did it today!** and gets a sticker (one a day). Missed days cost nothing; stickers just add up. At the goal: confetti, the prize goes on the Owed list, and the challenge starts over the next day. A parent (behind the PIN) can add, edit or delete a challenge and take a wrong sticker off. The tab shows once `challenges_list` is set.
 - **Rewards**: kids tap their star badge to trade stars for rewards. Rewards are edited from the card. **⭐ Adjust stars** on that screen lets a parent add or take a star, tap a demerit (like "Hitting −3") or set an exact total (behind the parent PIN when one is set).
 - **Owed rewards**: every redeemed reward goes on an Owed list on the Chores tab until a parent taps **Given**. **↩** cancels it and gives the stars back. The kid's rewards screen shows what they're waiting on.
 - **Photos**: a person's Home Assistant photo replaces their initials on chips, Planner columns and chore rings.
@@ -80,7 +81,7 @@ Everything below can be set from the card's **Edit** screen instead of YAML:
 - **General**: title, weather, which view to start on, default theme, first day of the week, idle timeout, tab order (drag to reorder, untick to hide), past events and event weather on Today, and header buttons.
 - **People**: one row per person with a color picker, calendars, the calendar new events go to, home/away person, chore list, star counter and the "[Name] - Event" title option. Reorder with the arrows; the remove button asks once before deleting.
 - **Shared calendars**: family, birthdays, trash day and so on, with a read-only switch.
-- **Lists**, **Chores and rewards** (rewards list, parent PIN), **Planner** hours and **Advanced** layout.
+- **Lists**, **Chores, rewards and challenges** (rewards list, challenges list, parent PIN), **Planner** hours and **Advanced** layout.
 
 The preview updates as you type. Defaults are left out of the saved YAML so it stays short.
 
@@ -143,6 +144,7 @@ rewards_owed_list: todo.skyfam_rewards_owed
 | `today_list_items` | `5` | When more than one list is on Today, items shown per list before a "+ N more" link. |
 | `rewards_list` | none | A to-do list holding the rewards. Without it, `rewards:` from the config is used and can't be edited from the card. |
 | `rewards_owed_list` | none | A to-do list where redeemed rewards wait until a parent marks them given. Each item's description reads "Mia · 10⭐ · redeemed Nov 3". |
+| `challenges_list` | none | A to-do list for the **Challenges** tab, one item per challenge. The item is the challenge ("🛏️ Sleep in your bed") and its description holds the rest: "Leo · goal 15 · prize 🧸 Lego set · stickers 2026-11-20 2026-11-21". The editor can create it for you. |
 | `hide_pictures` | `false` | Show initials instead of photos. |
 | `rewards` | `[]` | Static rewards, as `name`, `cost`, `icon`. Only used when `rewards_list` is not set. |
 | `weather_entity` | none | Current temperature, today's high/low, and a forecast in each week column. |
