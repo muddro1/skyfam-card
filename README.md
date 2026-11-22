@@ -44,6 +44,8 @@ On screens under 760px wide the side rail becomes a bottom tab bar and the views
 |---|---|
 | ![Chores](docs/chores.png) | ![Lists](docs/lists.png) |
 
+![Challenges](docs/challenges.png)
+
 ![Phone](docs/phone.png)
 
 ![Editing chores and rewards](docs/editing.png)

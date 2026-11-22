@@ -12,7 +12,7 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   };
   const shot = async (pg) => { await pg.waitForTimeout(350); const buf = await pg.screenshot(); return buf; };
   const c = (pg) => pg.locator("skyfam-card");
-  for (const v of ["today", "planner", "week", "month", "chores", "lists"]) { const pg = await open(v, 1280, 800); fs.writeFileSync(`${out}/${v}.png`, await shot(pg)); await pg.close(); }
+  for (const v of ["today", "planner", "week", "month", "chores", "lists", "challenges"]) { const pg = await open(v, 1280, 800); fs.writeFileSync(`${out}/${v}.png`, await shot(pg)); await pg.close(); }
   // grid of images: cols, cell width, cell height
   const grid = async (name, bufs, cols, w, h) => {
     const rows = Math.ceil(bufs.length / cols), W = cols * w + (cols - 1) * 10, H = rows * h + (rows - 1) * 10;

@@ -21,8 +21,7 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
 
   await leo.locator("[data-act=ch-sticker]").click(); await pg.waitForTimeout(200);
   let up = svc("update_item").filter((x) => x.target.entity_id === "todo.skyfam_challenges");
-  // the prize has "stickers" in it; the real stickers must still be read and kept
-  ok(up.length === 1 && up[0].data.description.includes(today) && up[0].data.description.startsWith("Leo · goal 15 · prize 🧸 New Lego set and stickers · stickers ")
+  ok(up.length === 1 && up[0].data.description.includes(today) && up[0].data.description.startsWith("Leo · goal 15 · prize 🧸 New Lego set · stickers ")
     && up[0].data.description.split(" ").filter((w) => /^\d{4}-/.test(w)).length === 8, "sticker saved with today's date, earlier ones kept: " + (up[0] && up[0].data.description));
   ok((await leo.locator(".stk.on").count()) === 8 && (await leo.locator("[data-act=ch-sticker]").count()) === 0, "8 stickers, and no second sticker today");
   await pg.evaluate(() => window.card._addSticker("ch1"));
@@ -64,14 +63,16 @@ const srv = http.createServer((q, r) => { const p = path.join(root, decodeURICom
   ok(!up[up.length - 1].data.description.includes(today) && (await modal().locator(".ch-count").innerText()) === "7 of 15", "last sticker taken off");
   await modal().locator("[data-act=close]").click();
 
-  // hand-edited items: a decimal goal, no emoji, and two challenges with the same prize (⭐ in one name)
+  // hand-edited items: a prize with "stickers" in it, a decimal goal, no emoji, and two challenges with the same prize (⭐ in one name)
   await pg.evaluate(async () => {
     const add = (item, description) => window.card._hass.callService("todo", "add_item", { item, description }, { entity_id: "todo.skyfam_challenges" });
+    await add("🎨 Draw a picture", "Mia · goal 5 · prize 🦄 Unicorn stickers · stickers 2026-01-05 2026-01-06");
     await add("Practice piano", "Leo · goal 14.5");
     await add("🥦 Eat a vegetable", "Leo · goal 1 · prize 🍦 Ice cream");
     await add("🧹 Tidy up 5 ⭐ times", "Leo · goal 1 · prize 🍦 Ice cream");
   });
   await pg.waitForTimeout(200);
+  ok((await c().locator(".chal:has-text('Draw a picture') .stk.on").count()) === 2, "a prize with \"stickers\" in it doesn't hide the real stickers");
   const piano = c().locator(".chal:has-text('Practice piano')");
   ok((await c().locator(".body").innerText()).includes("Practice piano") && (await piano.locator(".stk").count()) === 15, "decimal goal is rounded, the tab still renders");
   await piano.locator("[data-act=ch-open]").click(); await pg.waitForTimeout(100);
