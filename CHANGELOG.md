@@ -2,6 +2,14 @@
 
 Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
+## v0.13.0: Challenges
+Commit `58a2409`
+
+- **Challenges tab**: one thing to do every day for a prize, like "🛏️ Sleep in your bed" 15 times for a Lego set. The kid taps **I did it today!** and gets a sticker (one a day). Missed days cost nothing; stickers just add up. At the goal: confetti, the prize goes on the Owed list, and the challenge starts over the next day.
+- A parent (behind the PIN) can add, edit or delete a challenge and take a wrong sticker off.
+- **Setup**: in the card editor under **Chores, rewards and challenges**, press **🏆 Create a challenges list**, or set `challenges_list` to a Local To-do list. The tab shows once it's set. If your dashboard has its own `tabs` list, tick Challenges there too.
+- Includes every fix in v0.12.1.
+
 ## v0.12.1: Fixes
 Commit `dc398aa`
 
