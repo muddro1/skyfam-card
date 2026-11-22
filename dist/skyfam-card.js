@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.12.1-beta.1";
+const SKYFAM_VERSION = "0.12.1-beta.2";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -99,7 +99,6 @@ class SkyFamCard extends HTMLElement {
     this._forecast = [];
     this._unsubs = [];
     this._hidden = new Set(this._load("hidden", []));
-    this._listTab = 0;
     this._showDone = new Set();
     this._modal = null;
     this._lastTouch = Date.now();
@@ -146,10 +145,12 @@ class SkyFamCard extends HTMLElement {
     if (this._subSig && subSig !== this._subSig) this._teardown();
     this._subSig = subSig;
     this._sig = "";
+    // the offset lives on the host element, so it can be set before the card is built; blank goes back to auto sizing
+    const off = this._config.height_offset;
+    if (off != null && off !== "") this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
+    else if (this.isConnected) this._fit();
     if (this._hass) {
       if (!this._built) this._build();
-      const off = this._config.height_offset;
-      if (off != null && off !== "") this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
       if (!this._subscribed) this._subscribe();
       this._render();
     }
@@ -361,10 +362,9 @@ class SkyFamCard extends HTMLElement {
   }
 
   /* ---------- actions ---------- */
-  async _svc(domain, service, data, target) {
-    try { await this._hass.callService(domain, service, data, target); }
-    catch (e) { this._toast(`Couldn't save: ${e.message || e}`); throw e; }
-  }
+  // Shows the error and passes it on, so callers can still undo or stop.
+  _guard(p) { return p.catch((e) => { this._toast(`Couldn't save: ${e.message || e}`); throw e; }); }
+  _svc(domain, service, data, target) { return this._guard(this._hass.callService(domain, service, data, target)); }
 
   _parseChore(item) {
     const d = `${item.description || ""} ${item.summary || ""}`;
@@ -399,8 +399,7 @@ class SkyFamCard extends HTMLElement {
       return this._svc("counter", "set_value", { value: Math.max(0, (Number(st.state) || 0) + delta) }, { entity_id: entity });
     }
     const svc = delta > 0 ? "increment" : "decrement";
-    try { await Promise.all(Array.from({ length: n }, () => this._hass.callService("counter", svc, {}, { entity_id: entity }))); }
-    catch (e) { this._toast(`Couldn't save: ${e.message || e}`); throw e; }
+    await this._guard(Promise.all(Array.from({ length: n }, () => this._hass.callService("counter", svc, {}, { entity_id: entity }))));
   }
 
   async _toggleChore(person, uid) {
@@ -412,7 +411,9 @@ class SkyFamCard extends HTMLElement {
     const raw = this._todos[person.chores].find((i) => i.uid === uid);
     raw.status = toDone ? "completed" : "needs_action";
     this._render();
-    await this._svc("todo", "update_item", { item: uid, status: raw.status }, { entity_id: person.chores });
+    // a failed save puts the tick back, so the next tap can't take away stars that were never given
+    try { await this._svc("todo", "update_item", { item: uid, status: raw.status }, { entity_id: person.chores }); }
+    catch (e) { raw.status = it.status; this._render(); throw e; }
     if (it.stars && person.stars) await this._addStars(person.stars, toDone ? it.stars : -it.stars);
     if (toDone) {
       const left = items.filter((i) => i.uid !== uid && !i.done).length;
@@ -423,9 +424,11 @@ class SkyFamCard extends HTMLElement {
   async _toggleTodo(entity, uid) {
     const raw = (this._todos[entity] || []).find((i) => i.uid === uid);
     if (!raw) return;
-    raw.status = raw.status === "completed" ? "needs_action" : "completed";
+    const old = raw.status;
+    raw.status = old === "completed" ? "needs_action" : "completed";
     this._render();
-    await this._svc("todo", "update_item", { item: uid, status: raw.status }, { entity_id: entity });
+    try { await this._svc("todo", "update_item", { item: uid, status: raw.status }, { entity_id: entity }); }
+    catch (e) { raw.status = old; this._render(); throw e; }
   }
 
   async _addTodo(entity, text) {
@@ -433,10 +436,7 @@ class SkyFamCard extends HTMLElement {
     await this._svc("todo", "add_item", { item: text.trim() }, { entity_id: entity });
   }
 
-  async _ws(msg) {
-    try { return await this._hass.callWS(msg); }
-    catch (e) { this._toast(`Couldn't save: ${e.message || e}`); throw e; }
-  }
+  _ws(msg) { return this._guard(this._hass.callWS(msg)); }
   _addCal(o) { return o.add_calendar || o.calendars[0]; }
   _calFeatures(cal) { const st = this._hass.states[cal]; return st ? Number(st.attributes.supported_features) || 0 : 0; }
   // Edit / delete only when every calendar the event is on allows it, and none is marked read only
@@ -452,9 +452,10 @@ class SkyFamCard extends HTMLElement {
     const same = all.filter((o) => this._addCal(o) === e.calendar);
     return e.owner && !same.includes(e.owner) ? [e.owner, ...same] : same;
   }
-  _evData(f, owner, rrule) {
+  // keepTag: the event already had a "[Name] - " tag, so saving keeps one even without prefix_titles
+  _evData(f, owner, rrule, keepTag) {
     let summary = f.title.trim();
-    if (owner && owner.prefix_titles && !summary.startsWith("[")) summary = `[${owner.name}] - ${summary}`;
+    if (owner && (owner.prefix_titles || keepTag) && !summary.startsWith("[")) summary = `[${owner.name}] - ${summary}`;
     const endDate = ymd(addDays(parseLocalDate(f.date), f.allDay ? Math.max(1, f.span + 1) : f.span));
     const ev = f.allDay ? { summary, dtstart: f.date, dtend: endDate } : { summary, dtstart: isoLocal(f.date, f.start), dtend: isoLocal(endDate, f.end) };
     if (f.location) ev.location = f.location;
@@ -489,7 +490,7 @@ class SkyFamCard extends HTMLElement {
       for (const x of e.sources) {
         const owner = e.sources.length > 1 ? x.owner : chosen || x.owner;
         const rrule = scope === "one" ? "" : scope === "future" ? x.rrule : buildRrule(f);
-        const msg = { type: "calendar/event/update", entity_id: x.calendar, uid: x.uid, event: this._evData(f, owner, rrule) };
+        const msg = { type: "calendar/event/update", entity_id: x.calendar, uid: x.uid, event: this._evData(f, owner, rrule, x.rawTitle !== x.title) };
         if (scope) msg.recurrence_id = x.recurrenceId;
         if (scope === "future") msg.recurrence_range = "THISANDFUTURE";
         await this._ws(msg);
@@ -592,8 +593,6 @@ class SkyFamCard extends HTMLElement {
   /* ---------- shell ---------- */
   _build() {
     this._built = true;
-    const off = this._config.height_offset;
-    if (off != null && off !== "") this.style.setProperty("--skyfam-offset", typeof off === "number" ? off + "px" : off);
     this.shadowRoot.innerHTML = `<style>${SKYFAM_CSS}</style>
       <div class="app">
         <nav class="rail"></nav>
@@ -607,10 +606,12 @@ class SkyFamCard extends HTMLElement {
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.dataset && e.target.dataset.add) {
-        const v = e.target.value; e.target.value = ""; this._addTodo(e.target.dataset.add, v);
+        const t = e.target, v = t.value; t.value = "";
+        this._addTodo(t.dataset.add, v).catch(() => { if (!t.value) t.value = v; });
       }
     });
     root.addEventListener("pointerdown", () => (this._lastTouch = Date.now()), { passive: true });
+    root.addEventListener("input", () => (this._lastTouch = Date.now())); // on-screen keyboards send no pointer events
     root.addEventListener("pointerdown", (e) => this._dragStart(e));
   }
 
@@ -677,10 +678,11 @@ class SkyFamCard extends HTMLElement {
     const t = this.shadowRoot.querySelector(".clock");
     if (t) t.innerHTML = this._timeStr(new Date());
     const idle = (Number(this._config.idle_return_minutes) || 0) * 60000;
-    if (idle && Date.now() - this._lastTouch > idle && (this._view !== this._home() || this._modal)) {
+    if (idle && Date.now() - this._lastTouch > idle && (this._view !== this._home() || this._modal || this._editChores)) {
       this._view = this._home();
       this._anchor = startOfDay(new Date());
       this._modal = null;
+      this._editChores = false; // edit mode sits behind the parent PIN, so it locks again when the screen is left alone
       this._scrollNow = this._view === "planner";
       this._render();
     }
@@ -869,14 +871,16 @@ class SkyFamCard extends HTMLElement {
     if (events === null) return this._navBar(label) + `<div class="empty">Loading…</div>`;
     const list = this._onDay(this._visible(events), day);
     const colsOf = (e) => (e.owners.length ? e.owners.map((o) => (o.shared ? "shared" : o.key)) : ["shared"]);
-    const ds = +day;
-    const hourRows = [...Array(h1 - h0)].map((_, i) => `<div class="pl-hr" style="top:${i * H}px"><span>${new Date(ds + (h0 + i) * 3600000).toLocaleTimeString([], { hour: "numeric" }).replace(/\s?([AP])M/i, (m, a) => a.toLowerCase())}</span></div>`).join("");
+    // clock hours, not hours since midnight: a clock-change day has 23 or 25 hours
+    const next = addDays(day, 1);
+    const hr = (t) => (t < day ? -1 : t >= next ? 24 : t.getHours() + t.getMinutes() / 60);
+    const hourRows = [...Array(h1 - h0)].map((_, i) => `<div class="pl-hr" style="top:${i * H}px"><span>${new Date(day.getFullYear(), day.getMonth(), day.getDate(), h0 + i).toLocaleTimeString([], { hour: "numeric" }).replace(/\s?([AP])M/i, (m, a) => a.toLowerCase())}</span></div>`).join("");
     const allCells = [];
     const body = cols.map((c) => {
       const mine = list.filter((e) => colsOf(e).includes(c.key));
       const allDay = mine.filter((e) => e.allDay);
       const timed = mine.filter((e) => !e.allDay).map((e) => {
-        const st = Math.max((e.start - ds) / 3600000, h0), en = Math.min((e.end - ds) / 3600000, h1);
+        const st = Math.max(hr(e.start), h0), en = Math.min(hr(e.end), h1);
         return { e, st, en: Math.max(en, st + 0.4) };
       }).filter((x) => x.st < h1 && x.en > h0).sort((a, b) => a.st - b.st || b.en - a.en);
       // lay out overlapping events side by side
