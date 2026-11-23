@@ -9,7 +9,7 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
  try {
   await pg.goto("http://localhost:8778/test/harness.html"); await pg.waitForTimeout(600);
   // the Photos tab exists, is last by default, and starts empty
-  assert.deepEqual(await c().locator(".rail .nav > span:last-child").allInnerTexts(), ["Today","Planner","Week","Month","Chores","Lists","Photos"], "Photos is the default seventh tab");
+  assert.deepEqual(await c().locator(".rail .nav > span:last-child").allInnerTexts(), ["Today","Planner","Week","Month","Chores","Lists","Challenges","Photos"], "Photos is the default last tab");
   await c().locator(".nav", {hasText:"Photos"}).click(); await pg.waitForTimeout(300);
   assert.ok(await c().locator(".body .empty:has-text('No photos yet')").isVisible(), "empty state with no photos configured");
   console.log("PASS photos tab shell");
