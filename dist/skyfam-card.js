@@ -3,7 +3,7 @@
  *   calendar.*  (events via REST), todo.* (subscribe), counter.* (stars), weather.*, person.*
  * One file, no build step.
  */
-const SKYFAM_VERSION = "0.13.0";
+const SKYFAM_VERSION = "0.14.0-photos";
 
 const DAY_MS = 86400000;
 const pad = (n) => String(n).padStart(2, "0");
@@ -31,6 +31,7 @@ const NAV = [
   { id: "chores", label: "Chores", mdi: "mdi:star-circle", emoji: "⭐" },
   { id: "lists", label: "Lists", mdi: "mdi:format-list-checks", emoji: "📝" },
   { id: "challenges", label: "Challenges", mdi: "mdi:trophy", emoji: "🏆" },
+  { id: "photos", label: "Photos", mdi: "mdi:image-multiple", emoji: "🖼️" },
 ];
 const CHALLENGE_EMOJI = ["🛏️", "🌙", "🪥", "🥦", "📚", "🚽", "🧘", "🎹", "🏃", "🤫", "🙏", "💧"];
 // The sticker a day gets: picked from the date, so every screen shows the same one.
@@ -106,6 +107,9 @@ class SkyFamCard extends HTMLElement {
     this._hidden = new Set(this._load("hidden", []));
     this._showDone = new Set();
     this._modal = null;
+    this._frame = null; // photo viewer / screensaver overlay
+    this._manifest = { ts: 0, items: [], err: "", loading: false };
+    this._slideT = null;
     this._lastTouch = Date.now();
     this._sig = "";
     this._editChores = false;
@@ -137,6 +141,9 @@ class SkyFamCard extends HTMLElement {
     // a shared entry with no calendar (left over from "Add shared calendar") has nothing to show or save to
     this._shared = (config.shared || []).map((p, i) => norm(p, i + this._people.length, true)).filter((o) => o.calendars.length);
     this._lists = (config.lists || []).map((l) => (typeof l === "string" ? { entity: l } : l));
+    this._manifest = { ts: 0, items: [], err: "", loading: false };
+    this._loadManifest();
+    if (this._frame && !this._photos().length) this._exitFrame();
     this._calOwners = {};
     [...this._people, ...this._shared].forEach((o) => o.calendars.forEach((c) => (this._calOwners[c] = o)));
     const home = this._home();
@@ -219,13 +226,14 @@ class SkyFamCard extends HTMLElement {
 
   connectedCallback() {
     this._tick = setInterval(() => this._onTick(), 15000);
-    this._onResize = () => requestAnimationFrame(() => this._fit());
+    this._onResize = () => requestAnimationFrame(() => { this._fit(); if (this._view === "photos" && window.innerWidth !== this._gridW) this._render(); });
     window.addEventListener("resize", this._onResize);
     setTimeout(this._onResize, 50); setTimeout(this._onResize, 800);
     if (this._hass && !this._subscribed) this._subscribe();
   }
   disconnectedCallback() {
     clearInterval(this._tick);
+    clearInterval(this._slideT);
     window.removeEventListener("resize", this._onResize);
     this._teardown();
   }
@@ -322,6 +330,33 @@ class SkyFamCard extends HTMLElement {
       .sort((a, b) => (b.allDay - a.allDay) || (a.start - b.start));
     this._events[key] = { ts: Date.now(), events, loading: false };
     this._render();
+  }
+
+  /* ---------- photos ---------- */
+  _photos() {
+    const seen = new Set();
+    const out = [];
+    const push = (p) => {
+      const o = typeof p === "string" ? { url: p } : { ...p };
+      if (o.url && !seen.has(o.url)) { seen.add(o.url); out.push(o); }
+    };
+    (this._config.photos || []).forEach(push);
+    (this._manifest.items || []).forEach(push);
+    return out;
+  }
+
+  // A manifest is a JSON list (or {photos:[...]}) of photos: {url, caption}. Fetched when stale (5 min).
+  _loadManifest() {
+    const url = this._config.photos_manifest;
+    if (!url || this._manifest.loading || Date.now() - this._manifest.ts < 5 * 60000) return;
+    this._manifest = { ...this._manifest, loading: true };
+    fetch(url, { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then((j) => {
+        this._manifest = { ts: Date.now(), items: Array.isArray(j) ? j : (j && Array.isArray(j.photos) ? j.photos : []), err: "", loading: false };
+        this._render();
+      })
+      .catch((e) => { console.warn("skyfam photos manifest", url, e); this._manifest = { ts: Date.now(), items: [], err: e.message, loading: false }; this._render(); });
   }
 
   _normEvent(e, cal) {
@@ -675,6 +710,7 @@ class SkyFamCard extends HTMLElement {
         <nav class="rail"></nav>
         <main class="main"><header class="top"></header><section class="body"></section></main>
         <button class="fab" data-act="add-event" title="Add event">＋</button>
+        <div class="frame-host"></div>
         <div class="modal-host"></div><div class="toast"></div><div class="confetti"></div>
       </div>`;
     const root = this.shadowRoot;
@@ -687,9 +723,32 @@ class SkyFamCard extends HTMLElement {
         this._addTodo(t.dataset.add, v).catch(() => { if (!t.value) t.value = v; });
       }
     });
-    root.addEventListener("pointerdown", () => (this._lastTouch = Date.now()), { passive: true });
+    root.addEventListener("pointerdown", () => {
+      const ss = this._frame && this._frame.ss;
+      this._lastTouch = Date.now();
+      if (!ss) return;
+      this._exitFrame();
+      // the tap that ends the screensaver should not also open the photo under the finger
+      const stop = (ev) => ev.stopPropagation(); this.shadowRoot.addEventListener("click", stop, { capture: true, once: true }); setTimeout(() => this.shadowRoot.removeEventListener("click", stop, { capture: true }), 0);
+    }, { passive: true });
     root.addEventListener("input", () => (this._lastTouch = Date.now())); // on-screen keyboards send no pointer events
     root.addEventListener("pointerdown", (e) => this._dragStart(e));
+    // Swipe left/right to change photos while the fullscreen viewer is open.
+    root.addEventListener("pointerdown", (e) => {
+      if (!this._frame || this._frame.ss) { this._swipe = null; return; }
+      this._swipe = { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId };
+    }, { passive: true });
+    root.addEventListener("pointercancel", () => { this._swipe = null; }, { passive: true });
+    root.addEventListener("pointerup", (e) => {
+      const s = this._swipe; this._swipe = null;
+      if (!s || s.id !== e.pointerId || !this._frame || this._frame.ss) return;
+      const dx = e.clientX - s.x, dy = e.clientY - s.y;
+      if (Math.abs(dx) < 60 || Math.abs(dy) > 50 || Date.now() - s.t > 800) return;
+      const n = this._photos().length;
+      if (n > 1) { this._frame.i = (this._frame.i + (dx < 0 ? 1 : n - 1)) % n; this._lastTouch = Date.now(); this._render(); }
+      // the synthesized click that follows a swipe must not also close the viewer
+      const stop = (ev) => ev.stopPropagation(); this.shadowRoot.addEventListener("click", stop, { capture: true, once: true }); setTimeout(() => this.shadowRoot.removeEventListener("click", stop, { capture: true }), 0);
+    }, { passive: true });
   }
 
   // Edit mode: drag a chore by its grip to reorder it within its time-of-day group.
@@ -754,6 +813,10 @@ class SkyFamCard extends HTMLElement {
   _onTick() {
     const t = this.shadowRoot.querySelector(".clock");
     if (t) t.innerHTML = this._timeStr(new Date());
+    if (this._frame) return;
+    if (this._view === "photos" && this._config.photos_manifest && Date.now() - this._manifest.ts >= 5 * 60000) this._loadManifest();
+    const ssMin = Number(this._config.photos_slideshow_minutes) || 0;
+    if (ssMin && Date.now() - this._lastTouch > ssMin * 60000 && this._photos().length) { this._enterFrame({ i: 0, ss: true, t0: Date.now() }); return; }
     const idle = (Number(this._config.idle_return_minutes) || 0) * 60000;
     if (idle && Date.now() - this._lastTouch > idle && (this._view !== this._home() || this._modal || this._editChores)) {
       this._view = this._home();
@@ -775,8 +838,9 @@ class SkyFamCard extends HTMLElement {
   // Tabs in the order of config tabs (unlisted ones hidden); all of NAV when tabs isn't set.
   _tabs() {
     const ids = Array.isArray(this._config.tabs) ? this._config.tabs : [];
-    // the Challenges tab needs its list, so it stays hidden until one is set up
-    const nav = NAV.filter((n) => n.id !== "challenges" || this._config.challenges_list);
+    // Challenges and Photos stay hidden until they have something to show
+    const hasPhotos = (this._config.photos || []).length || this._config.photos_manifest;
+    const nav = NAV.filter((n) => (n.id !== "challenges" || this._config.challenges_list) && (n.id !== "photos" || hasPhotos));
     const tabs = ids.map((id) => nav.find((n) => n.id === id)).filter(Boolean);
     return tabs.length ? tabs : nav;
   }
@@ -813,6 +877,7 @@ class SkyFamCard extends HTMLElement {
     this._applyTheme();
     if (this._view === "planner" && this._scrollNow && root.querySelector(".pl-scroll")) { this._scrollNow = false; requestAnimationFrame(() => this._scrollPlannerToNow()); }
     this._renderModal();
+    this._renderFrame();
     if (keep) {
       const el = root.querySelector(`[data-keep="${keep.k}"]`);
       if (el) { el.value = keep.v; el.focus(); try { el.setSelectionRange(keep.s, keep.s); } catch (e) {} }
@@ -1242,6 +1307,59 @@ class SkyFamCard extends HTMLElement {
   _openModal(m) { m.sig = Math.random().toString(36); this._modal = m; this._renderModal(); }
   _closeModal() { this._modal = null; this._renderModal(); }
 
+  /* ---------- photo views ---------- */
+  _view_photos() {
+    this._loadManifest();
+    const photos = this._photos();
+    if (!photos.length) return `<div class="empty">${this._manifest.loading ? "Loading photos…" : "No photos yet. Add image URLs or a manifest under Photos in the card's Edit screen."}</div>`;
+    const grid = (() => {
+      const w = window.innerWidth;
+      this._gridW = w;
+      const cols = Math.max(2, Math.min(photos.length, w >= 900 ? 4 : w >= 640 ? 3 : 2));
+      return `<div class="ph-grid" style="columns:${cols}">${photos.map((p, i) => `<button class="ph" data-act="photo" data-i="${i}"><img loading="lazy" src="${esc(p.url)}" alt="">${p.caption ? `<span class="cap">${esc(p.caption)}</span>` : ""}</button>`).join("")}</div>`;
+    })();
+    return grid + (this._manifest.err ? `<div class="empty small">Manifest failed: ${esc(this._manifest.err)}${(this._config.photos || []).length ? " — pinned photos still shown." : ""}</div>` : "");
+  }
+
+  _enterFrame(f) {
+    clearInterval(this._slideT); this._slideT = null;
+    this._frame = f;
+    if (f.ss) {
+      const s = Math.max(3, Number(this._config.photos_slideshow_seconds) || 15);
+      this._slideT = setInterval(() => { if (!this._frame || !this._frame.ss) { clearInterval(this._slideT); return; } this._render(); }, s * 1000);
+    }
+    this._render();
+  }
+
+  _exitFrame() {
+    if (!this._frame) return;
+    clearInterval(this._slideT); this._slideT = null;
+    this._frame = null;
+    this._render();
+  }
+
+  _renderFrame() {
+    const host = this.shadowRoot.querySelector(".frame-host");
+    if (!host) return;
+    const photos = this._photos();
+    if (!this._frame) { if (host.className !== "frame-host") { host.className = "frame-host"; host.innerHTML = ""; } return; }
+    if (!photos.length) { this._frame = null; clearInterval(this._slideT); this._slideT = null; host.className = "frame-host"; host.innerHTML = ""; return; }
+    const f = this._frame;
+    if (f.ss) {
+      const s = Math.max(3, Number(this._config.photos_slideshow_seconds) || 15);
+      f.i = Math.floor((Date.now() - f.t0) / (s * 1000)) % photos.length;
+    }
+    const p = photos[f.i] || photos[0];
+    const now = new Date();
+    const clock = f.ss ? `<div class="fr-clock">${this._timeStr(now)}<small>${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</small></div>` : "";
+    const ctrls = f.ss ? "" : `<button class="fr-x" data-act="viewer-close" title="Close">✕</button><button class="fr-nav fr-prev" data-act="viewer-prev" title="Previous">‹</button><button class="fr-nav fr-next" data-act="viewer-next" title="Next">›</button><div class="fr-cnt">${f.i + 1} / ${photos.length}</div>`;
+    host.className = `frame-host on${f.ss ? " ss" : ""}`;
+    host.innerHTML = `<div class="fr-scrim" data-act="frame-scrim"><img class="fr-bg" draggable="false" src="${esc(p.url)}" alt=""><img class="fr-img" draggable="false" src="${esc(p.url)}" alt="">${clock}${p.caption ? `<div class="fr-cap">${esc(p.caption)}</div>` : ""}${ctrls}</div>`;
+    // warm the next photo while this one is on screen
+    const nx = photos[(f.i + 1) % photos.length];
+    if (nx && nx.url !== p.url) { const im = new Image(); im.src = nx.url; }
+  }
+
   /* ---------- events ---------- */
   _onClick(ev) {
     this._lastTouch = Date.now();
@@ -1251,6 +1369,14 @@ class SkyFamCard extends HTMLElement {
     const all = () => this._eventsFor(...this._range()) || [];
     switch (a) {
       case "view": this._view = el.dataset.v; this._anchor = startOfDay(new Date()); this._scrollNow = this._view === "planner"; this._render(); break;
+      case "photo": this._enterFrame({ i: Number(el.dataset.i) || 0, ss: false }); break;
+      case "frame-scrim": this._exitFrame(); break;
+      case "viewer-close": this._exitFrame(); break;
+      case "viewer-prev": case "viewer-next": {
+        const n = this._photos().length;
+        if (this._frame && n > 1) { this._frame.i = (this._frame.i + (a === "viewer-next" ? 1 : n - 1)) % n; this._render(); }
+        break;
+      }
       case "filter": {
         const k = el.dataset.k;
         this._hidden.has(k) ? this._hidden.delete(k) : this._hidden.add(k);
@@ -1784,6 +1910,24 @@ textarea.in { resize:vertical; font-weight:500; } .row.wrap { flex-wrap:wrap; }
   .planner { --plt:46px; --plc:118px; }
   .nav { padding:6px 4px; }
 }
+.ph-grid { columns:4 230px; column-gap:12px; }
+.ph { display:block; width:100%; margin:0 0 12px; break-inside:avoid; border-radius:14px; overflow:hidden; cursor:pointer; position:relative; background:var(--line); }
+.ph img { display:block; width:100%; }
+.ph .cap { position:absolute; left:0; right:0; bottom:0; padding:18px 10px 7px; font-size:13px; font-weight:700; color:#fff; background:linear-gradient(transparent, #000b); }
+.frame-host { display:none; }
+.frame-host.on { display:block; position:absolute; inset:0; z-index:30; background:#08090b; }
+.fr-scrim { position:absolute; inset:0; touch-action:none; -webkit-user-select:none; user-select:none; }
+.fr-bg, .fr-img { -webkit-user-drag:none; -webkit-touch-callout:none; }
+.fr-bg { position:absolute; inset:-8%; width:116%; height:116%; object-fit:cover; filter:blur(26px) saturate(1.25); opacity:.5; }
+.fr-img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+.fr-clock { position:absolute; top:18px; left:22px; color:#fff; font-weight:800; font-size:30px; text-shadow:0 1px 10px #000; pointer-events:none; }
+.fr-clock small { display:block; font-size:13px; font-weight:600; opacity:.85; }
+.fr-cap { position:absolute; left:0; right:0; bottom:0; padding:26px 16px 12px; color:#fff; font-size:15px; font-weight:700; text-align:center; background:linear-gradient(transparent, #000c); pointer-events:none; }
+.fr-x { position:absolute; top:12px; right:12px; color:#fffc; background:#0006; border-radius:10px; padding:6px 12px; font-size:16px; }
+.fr-nav { position:absolute; top:50%; transform:translateY(-50%); color:#fffc; background:#0005; border-radius:12px; padding:6px 16px; font-size:30px; line-height:1; }
+.fr-prev { left:10px; } .fr-next { right:10px; }
+.fr-cnt { position:absolute; bottom:14px; right:16px; color:#fff9; font-size:12px; font-weight:700; }
+.v-photos { padding:4px; }
 `;
 
 /* ---------- visual editor ---------- */
@@ -1802,6 +1946,7 @@ const ED_LABELS = {
   planner_start_hour: "Day starts at (hour)", planner_end_hour: "Day ends at (hour)",
   planner_hour_height: "Hour height", planner_shared_name: "Shared column name",
   height_offset: "Height offset", tabs: "Tabs", header_buttons: "Header buttons", today_past_events: "Past events on Today", event_weather: "Show the forecast on Today's events",
+  photos_manifest: "Manifest URL", photos_slideshow_minutes: "Photo frame after idle", photos_slideshow_seconds: "Seconds per photo", photos: "Pinned photos",
 };
 const ED_HELP = {
   idle_return_minutes: "0 turns this off",
@@ -1823,6 +1968,10 @@ const ED_HELP = {
   tabs: "Drag to reorder. Untick a tab to hide it",
   header_buttons: "Your own shortcuts next to the theme button: a name, an icon (emoji or mdi:), and a link (e.g. ks://camera for Kiosk Satellite) or a tap action (e.g. a browser_mod popup). Show on: hide it on phones or show it only on phones",
   event_weather: "Uses the weather entity's hourly forecast, or the daily one when there's no hourly",
+  photos_manifest: "A JSON list of photos, like /local/photos/photos.json — plain URLs or objects with url and caption. Refetched every 5 minutes",
+  photos_slideshow_minutes: "0 turns the screensaver off. After this many idle minutes the card becomes a photo frame; any tap goes back",
+  photos_slideshow_seconds: "How long each photo shows in the slideshow",
+  photos: "These show first, then the manifest's photos",
 };
 
 const ED_SCHEMA = {
@@ -1848,6 +1997,11 @@ const ED_SCHEMA = {
       tap_action: { label: "Tap action (instead of a link)", selector: { ui_action: {} } },
       show_on: { label: "Show on", selector: edSelect([{ value: "all", label: "All screens" }, { value: "not_phone", label: "Not on phones" }, { value: "phone", label: "Phones only" }]) },
     } } } },
+  ],
+  photos: [
+    { name: "photos_manifest", selector: { text: {} } },
+    { type: "grid", name: "", schema: [{ name: "photos_slideshow_minutes", selector: edNum(0, 240, "min") }, { name: "photos_slideshow_seconds", selector: edNum(3, 120, "s") }] },
+    { name: "photos", selector: { object: { multiple: true, label_field: "url", fields: { url: { label: "Image URL", selector: { text: {} } }, caption: { label: "Caption (optional)", selector: { text: {} } } } } } },
   ],
   person: [
     { type: "grid", name: "", schema: [{ name: "name", required: true, selector: { text: {} } }, { name: "initials", selector: { text: {} } }] },
@@ -1890,7 +2044,7 @@ const ED_SCHEMA = {
   advanced: [{ name: "height_offset", selector: edNum(0, 400, "px") }],
 };
 
-const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "header_buttons", "people", "shared", "lists",
+const ED_ORDER = ["type", "title", "weather_entity", "default_view", "theme", "first_day", "idle_return_minutes", "hide_pictures", "tabs", "today_past_events", "event_weather", "header_buttons", "people", "shared", "lists", "photos",
   "rewards_list", "rewards_owed_list", "challenges_list", "rewards", "demerits", "parent_pin", "planner_start_hour", "planner_end_hour", "planner_hour_height", "planner_shared_name", "height_offset", "today_list_items"];
 const ED_ITEM_ORDER = ["name", "initials", "color", "calendars", "add_calendar", "person", "picture", "chores", "stars", "prefix_titles", "read_only", "entity", "today"];
 
@@ -2109,6 +2263,7 @@ class SkyFamCardEditor extends HTMLElement {
       ${section("people", "People", `${c.people.length} ${c.people.length === 1 ? "person" : "people"}, each with their own color and calendars`, items("people", c.people, "Add person"))}
       ${section("shared", "Shared calendars", "Family, birthdays, trash day and other calendars that aren't one person's", items("shared", c.shared, "Add shared calendar"))}
       ${section("lists", "Lists", "To-do lists for the Lists tab. Turn on \"Show on Today\" for the ones to stack on the Today screen", items("lists", c.lists, "Add list") + `<div data-slot="listopts"></div>`)}
+      ${section("photos", "Photos", "Photo frame tab: pinned photos, an optional JSON manifest and an idle slideshow", `<div data-slot="photos"></div>`)}
       ${section("chores", "Chores, rewards and challenges", "Chore lists and star counters are set per person above", `<div data-slot="chores"></div>`)}
       ${section("planner", "Planner", "Hours shown in the Planner view", `<div data-slot="planner"></div>`)}
       ${section("advanced", "Advanced", "Layout tweaks", `<div data-slot="advanced"></div>`)}`;
@@ -2140,6 +2295,17 @@ class SkyFamCardEditor extends HTMLElement {
     this._form(slot("listopts"), [{ name: "today_list_items", selector: edNum(1, 20) }],
       () => (c = this._config, { today_list_items: c.today_list_items ?? 5 }),
       (v) => { set(v); if (this._config.today_list_items === 5) delete this._config.today_list_items; });
+    this._form(slot("photos"), ED_SCHEMA.photos,
+      () => (c = this._config, { photos_manifest: c.photos_manifest || "", photos_slideshow_minutes: c.photos_slideshow_minutes ?? 0, photos_slideshow_seconds: c.photos_slideshow_seconds ?? 15, photos: c.photos || [] }),
+      (v) => {
+        set(v);
+        if (!this._config.photos_manifest) delete this._config.photos_manifest;
+        if (!this._config.photos_slideshow_minutes) delete this._config.photos_slideshow_minutes;
+        if (this._config.photos_slideshow_seconds === 15) delete this._config.photos_slideshow_seconds;
+        if (!(this._config.photos || []).length) delete this._config.photos;
+        this._manifest = { ts: 0, items: [], err: "", loading: false };
+        this._loadManifest();
+      });
     this._form(slot("advanced"), ED_SCHEMA.advanced, () => (c = this._config, { height_offset: c.height_offset }), set);
 
     [["people", ED_SCHEMA.person], ["shared", ED_SCHEMA.shared], ["lists", ED_SCHEMA.list]].forEach(([group, schema]) => {
