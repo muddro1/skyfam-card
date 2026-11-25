@@ -838,8 +838,9 @@ class SkyFamCard extends HTMLElement {
   // Tabs in the order of config tabs (unlisted ones hidden); all of NAV when tabs isn't set.
   _tabs() {
     const ids = Array.isArray(this._config.tabs) ? this._config.tabs : [];
-    // the Challenges tab needs its list, so it stays hidden until one is set up
-    const nav = NAV.filter((n) => n.id !== "challenges" || this._config.challenges_list);
+    // Challenges and Photos stay hidden until they have something to show
+    const hasPhotos = (this._config.photos || []).length || this._config.photos_manifest;
+    const nav = NAV.filter((n) => (n.id !== "challenges" || this._config.challenges_list) && (n.id !== "photos" || hasPhotos));
     const tabs = ids.map((id) => nav.find((n) => n.id === id)).filter(Boolean);
     return tabs.length ? tabs : nav;
   }

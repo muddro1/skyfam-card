@@ -8,10 +8,13 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
  const cfg=(extra)=>pg.evaluate((x)=>{ window.card.setConfig({ ...window.card._config, ...x }); }, extra);
  try {
   await pg.goto("http://localhost:8778/test/harness.html"); await pg.waitForTimeout(600);
-  // the Photos tab exists, is last by default, and starts empty
-  assert.deepEqual(await c().locator(".rail .nav > span:last-child").allInnerTexts(), ["Today","Planner","Week","Month","Chores","Lists","Challenges","Photos"], "Photos is the default last tab");
+  // the Photos tab stays hidden until a photo source is configured, then reveals itself
+  assert.deepEqual(await c().locator(".rail .nav > span:last-child").allInnerTexts(), ["Today","Planner","Week","Month","Chores","Lists","Challenges"], "no Photos tab while unconfigured");
+  assert.equal(await pg.evaluate(() => window.card._view), "today", "start view falls back when photos hidden");
+  await cfg({ photos_manifest:"/test/fixtures/photos.json" }); await pg.waitForTimeout(400);
+  assert.equal(await c().locator(".rail .nav", {hasText:"Photos"}).count(), 1, "a configured manifest reveals the tab");
   await c().locator(".nav", {hasText:"Photos"}).click(); await pg.waitForTimeout(300);
-  assert.ok(await c().locator(".body .empty:has-text('No photos yet')").isVisible(), "empty state with no photos configured");
+  assert.ok(await c().locator(".ph").first().isVisible(), "manifest photos render");
   console.log("PASS photos tab shell");
   // grid: two pinned photos plus the manifest's, a duplicate URL is dropped, captions survive
   await cfg({ photos:[{url:"/test/fixtures/p1.svg", caption:"Pinned"}, "/test/fixtures/p2.svg"], photos_manifest:"/test/fixtures/photos.json" });

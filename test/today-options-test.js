@@ -29,7 +29,7 @@ const srv=http.createServer((q,r)=>{const p=path.join(root,decodeURIComponent(q.
   await cfg({ tabs: ["chores", "week"] }); await pg.waitForTimeout(200);
   assert.equal(await c().locator(".rail .nav.on > span:last-child").innerText(), "Chores", "hidden start view falls back to first tab");
   await cfg({ tabs: [] }); await pg.waitForTimeout(200);
-  assert.equal(await c().locator(".rail .nav").count(), 8, "empty tabs shows all");
+  assert.equal(await c().locator(".rail .nav").count(), 7, "empty tabs shows all");
   await shot("2-tabs"); console.log("PASS tabs");
   // header_buttons: own shortcut links next to the theme button; javascript: links are dropped
   await cfg({ tabs: [], header_buttons: [{ name: "Camera", icon: "📷", url: "ks://camera" }, { url: "javascript:alert(1)" }, { name: "No link" }] }); await pg.waitForTimeout(200);

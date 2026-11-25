@@ -6,7 +6,7 @@ Each version matches a commit on `main`. Tag `vX.Y.Z` points at that commit.
 
 - New **Photos** tab: masonry grid of pinned photos and a JSON manifest (`photos`, `photos_manifest`), captions, tap-to-fullscreen viewer with prev/next.
 - **Photo-frame mode**: after `photos_slideshow_minutes` idle, the card becomes a fullscreen slideshow (rotates every `photos_slideshow_seconds`, blurred backdrop, clock and caption, tap to exit).
-- Verified with a new Playwright suite (`test/photos-test.js`); the default tab list is now eight tabs.
+- The tab is hidden until a photo source is configured (same rule as Challenges). Verified with a new Playwright suite (`test/photos-test.js`).
 
 ## v0.13.0: Challenges
 Commit `58a2409`
